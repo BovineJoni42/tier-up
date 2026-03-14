@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useTierStore } from '../store/useTierStore'
+import { useTierStore, type ListType } from '../store/useTierStore'
 import { TIER_META, TIER_ORDER } from '../store/useTierStore'
 import Button from '../components/Button'
 
@@ -9,14 +9,16 @@ export default function Dashboard() {
   const { lists, createList, renameList, duplicateList, deleteList } = useTierStore()
   const [showNewModal, setShowNewModal] = useState(false)
   const [newName, setNewName] = useState('')
+  const [newType, setNewType] = useState<ListType>('games')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   const handleCreate = () => {
     if (!newName.trim()) return
-    const id = createList(newName.trim())
+    const id = createList(newName.trim(), newType)
     setNewName('')
+    setNewType('games')
     setShowNewModal(false)
     navigate(`/list/${id}`)
   }
@@ -101,7 +103,12 @@ export default function Dashboard() {
                   ) : (
                     <>
                       <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
                         <h2 className="font-display text-xl font-bold tracking-wide leading-tight">{list.name}</h2>
+                        <span className="text-lg flex-shrink-0">
+                          {list.type === 'movies' ? '🎬' : list.type === 'tv' ? '📺' : '🎮'}
+                        </span>
+                      </div>
                         {/* Actions - visible on hover */}
                         <div
                           className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
@@ -192,12 +199,30 @@ export default function Dashboard() {
           <div className="bg-[#14142a] border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
             <div className="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-5" />
             <h2 className="font-display text-xl font-bold text-center tracking-wide mb-5">New Tier List</h2>
+            {/* Type picker */}
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {([['games','🎮','Games'],['movies','🎬','Movies'],['tv','📺','TV Shows']] as const).map(([type, emoji, label]) => (
+                <button
+                  key={type}
+                  onClick={() => setNewType(type)}
+                  className={`flex flex-col items-center gap-1 py-3 rounded-xl border-2 transition-all font-body
+                    ${newType === type
+                      ? 'border-violet-500 bg-violet-950/50 text-white'
+                      : 'border-slate-700 bg-[#0e0e1a] text-slate-400 hover:border-slate-500'
+                    }`}
+                >
+                  <span className="text-2xl">{emoji}</span>
+                  <span className="text-xs font-semibold">{label}</span>
+                </button>
+              ))}
+            </div>
+
             <input
               autoFocus
               value={newName}
               onChange={e => setNewName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              placeholder='e.g. "My Favorite RPGs"'
+              placeholder={newType === 'movies' ? 'e.g. "Best Action Movies"' : newType === 'tv' ? 'e.g. "Top Drama Shows"' : 'e.g. "My Favorite RPGs"'}
               maxLength={50}
               className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white
                 placeholder-slate-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30 mb-4"

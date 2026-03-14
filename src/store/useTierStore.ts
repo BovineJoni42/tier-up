@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware'
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type TierId = 'sp' | 'a' | 'b' | 'c' | 'd' | 'f'
+export type ListType = 'games' | 'movies' | 'tv'
 
 export interface Game {
   id: string          // unique within this list (rawg id or manual uuid)
@@ -17,10 +18,11 @@ export interface Game {
 export interface TierList {
   id: string
   name: string
+  type: ListType
   createdAt: number
   updatedAt: number
   tiers: Record<TierId, Game[]>
-  top5: string[]      // ordered array of game ids (max 5)
+  top5: string[]      // ordered array of item ids (max 5)
 }
 
 export const TIER_META: Record<TierId, { label: string; color: string; bg: string }> = {
@@ -48,7 +50,7 @@ interface TierStore {
   lists: TierList[]
 
   // List CRUD
-  createList: (name: string) => string
+  createList: (name: string, type?: ListType) => string
   renameList: (id: string, name: string) => void
   duplicateList: (id: string) => string
   deleteList: (id: string) => void
@@ -71,12 +73,13 @@ export const useTierStore = create<TierStore>()(
     (set, get) => ({
       lists: [],
 
-      createList: (name) => {
+      createList: (name, type = 'games') => {
         const id = uuid()
         const now = Date.now()
         const list: TierList = {
           id,
           name,
+          type,
           createdAt: now,
           updatedAt: now,
           tiers: emptyTiers(),
@@ -103,6 +106,7 @@ export const useTierStore = create<TierStore>()(
           ...src,
           id: newId,
           name: src.name + ' (copy)',
+          type: src.type ?? 'games',
           createdAt: now,
           updatedAt: now,
           tiers: Object.fromEntries(

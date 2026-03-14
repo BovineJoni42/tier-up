@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchGames, RAWG_GENRES, GENRE_LABELS } from '../lib/rawg'
 import type { SearchResult } from '../lib/rawg'
-import type { TierId, Game } from '../store/useTierStore'
+import { searchMovies, searchTV, MOVIE_GENRES, TV_GENRES } from '../lib/tmdb'
+import type { TierId, Game, ListType } from '../store/useTierStore'
 import { TIER_META, TIER_ORDER } from '../store/useTierStore'
 import Button from './Button'
 
 interface GameSearchModalProps {
   open: boolean
   defaultTier?: TierId
+  listType?: ListType
   onClose: () => void
   onAddGame: (game: Game, tierId: TierId) => void
 }
@@ -17,6 +19,7 @@ type Tab = 'search' | 'manual'
 export default function GameSearchModal({
   open,
   defaultTier,
+  listType = 'games',
   onClose,
   onAddGame,
 }: GameSearchModalProps) {
@@ -49,13 +52,19 @@ export default function GameSearchModal({
   }, [open, defaultTier])
 
   const doSearch = useCallback(async (q: string, g: string) => {
-    // Allow genre-only search (no query), but require at least one of query or genre
     if (!q.trim() && (!g || g === 'All')) { setResults([]); return }
     setLoading(true)
-    const r = await searchGames(q, g === 'All' ? undefined : g)
+    let r: SearchResult[] = []
+    if (listType === 'movies') {
+      r = await searchMovies(q, g === 'All' ? undefined : g)
+    } else if (listType === 'tv') {
+      r = await searchTV(q, g === 'All' ? undefined : g)
+    } else {
+      r = await searchGames(q, g === 'All' ? undefined : g)
+    }
     setResults(r)
     setLoading(false)
-  }, [])
+  }, [listType])
 
   const handleQueryChange = (q: string) => {
     setQuery(q)
@@ -116,7 +125,7 @@ export default function GameSearchModal({
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-          <h2 className="font-display text-xl font-bold tracking-wide">Add Game</h2>
+          <h2 className="font-display text-xl font-bold tracking-wide">{listType === 'movies' ? 'Add Movie' : listType === 'tv' ? 'Add TV Show' : 'Add Game'}</h2>
           <Button variant="icon" size="sm" onClick={onClose}>✕</Button>
         </div>
 
@@ -147,13 +156,13 @@ export default function GameSearchModal({
                 ref={inputRef}
                 value={query}
                 onChange={e => handleQueryChange(e.target.value)}
-                placeholder="Search 500,000+ games..."
+                placeholder={listType === 'movies' ? 'Search movies...' : listType === 'tv' ? 'Search TV shows...' : 'Search 500,000+ games...'}
                 className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30"
               />
 
               {/* Genre chips */}
               <div className="flex gap-2 flex-wrap">
-                {RAWG_GENRES.map(g => (
+                {(listType === 'movies' ? MOVIE_GENRES : listType === 'tv' ? TV_GENRES : RAWG_GENRES).map(g => (
                   <button
                     key={g}
                     onClick={() => handleGenreChange(g)}
@@ -163,7 +172,7 @@ export default function GameSearchModal({
                         : 'border-slate-700 text-slate-400 hover:border-violet-500 hover:text-slate-200'
                       }`}
                   >
-                    {GENRE_LABELS[g]}
+                    {listType === 'games' ? (GENRE_LABELS[g] ?? g) : g}
                   </button>
                 ))}
               </div>
@@ -178,7 +187,7 @@ export default function GameSearchModal({
               )}
 
               {!loading && results.length === 0 && !query && (
-                <div className="text-center text-slate-600 text-sm py-8 font-mono">Type to search, or pick a genre above</div>
+                <div className="text-center text-slate-600 text-sm py-8 font-mono">{listType === 'movies' ? 'Search movies or pick a genre' : listType === 'tv' ? 'Search TV shows or pick a genre' : 'Type to search, or pick a genre above'}</div>
               )}
 
               {!loading && results.length > 0 && (
@@ -220,7 +229,7 @@ export default function GameSearchModal({
               <input
                 value={manualTitle}
                 onChange={e => setManualTitle(e.target.value)}
-                placeholder="Game title *"
+                placeholder={listType === 'movies' ? 'Movie title *' : listType === 'tv' ? 'Show title *' : 'Game title *'}
                 className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
               />
               <input
@@ -233,7 +242,7 @@ export default function GameSearchModal({
                 <input
                   value={manualPlatform}
                   onChange={e => setManualPlatform(e.target.value)}
-                  placeholder="Platform (e.g. PS5)"
+                  placeholder={listType === 'movies' ? 'Studio / Director' : listType === 'tv' ? 'Network (e.g. HBO)' : 'Platform (e.g. PS5)'}
                   className="flex-1 bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
                 />
                 <input

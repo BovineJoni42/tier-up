@@ -8,6 +8,7 @@ import {
   useSensors,
   rectIntersection,
   type DragStartEvent,
+  type DragEndEvent,
   type DragOverEvent,
   type CollisionDetection,
 } from '@dnd-kit/core'
@@ -284,7 +285,8 @@ async function exportToCanvas(list: { name: string; tiers: Record<TierId, Game[]
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.letterSpacing = '4px'
-  ctx.fillText('MADE WITH TIERUP', W / 2, y + 16)
+  const typeEmoji = list.type === 'movies' ? '🎬' : list.type === 'tv' ? '📺' : '🎮'
+  ctx.fillText(`${typeEmoji}  MADE WITH TIERUP  ${typeEmoji}`, W / 2, y + 16)
 
   return canvas.toDataURL('image/png')
 }
@@ -529,6 +531,7 @@ export default function TierListBuilder() {
       <GameSearchModal
         open={searchOpen}
         defaultTier={defaultSearchTier}
+        listType={list.type ?? 'games'}
         onClose={() => setSearchOpen(false)}
         onAddGame={(game, tierId) => addGame(list.id, tierId, game)}
       />
