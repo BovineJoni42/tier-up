@@ -4,6 +4,20 @@
 // and returns it as a base64 data URL string for use in the frontend export.
 #[tauri::command]
 async fn fetch_image_as_base64(url: String) -> Result<String, String> {
+    // Only allow fetching from trusted image CDNs — prevents SSRF attacks
+    let allowed_hosts = [
+        "media.rawg.io",
+        "image.tmdb.org",
+        "images.igdb.com",
+    ];
+
+    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let host = parsed.host_str().unwrap_or("");
+
+    if !allowed_hosts.iter().any(|&h| host == h || host.ends_with(&format!(".{}", h))) {
+        return Err(format!("URL host '{}' is not in the allowed list", host));
+    }
+
     let response = reqwest::get(&url)
         .await
         .map_err(|e| e.to_string())?;

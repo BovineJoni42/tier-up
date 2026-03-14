@@ -4417,6 +4417,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
+ "url",
 ]
 
 [[package]]
