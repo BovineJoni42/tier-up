@@ -8,11 +8,11 @@ import {
   useSensors,
   rectIntersection,
   type DragStartEvent,
-  type DragEndEvent,
   type DragOverEvent,
   type CollisionDetection,
 } from '@dnd-kit/core'
 import { save } from '@tauri-apps/plugin-dialog'
+import { open as openUrl } from '@tauri-apps/plugin-shell'
 import { writeFile } from '@tauri-apps/plugin-fs'
 import { useTierStore, TIER_ORDER, TIER_META, type TierId, type Game } from '../store/useTierStore'
 import TierRow from '../components/TierRow'
@@ -303,6 +303,8 @@ export default function TierListBuilder() {
   const [activeGame, setActiveGame] = useState<Game | null>(null)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState('')
+  const [shareOpen, setShareOpen] = useState(false)
+  const [savedPath, setSavedPath] = useState<string | null>(null)
 
   const dragGameId = useRef<string | null>(null)
   const dragCurrentTier = useRef<TierId | null>(null)
@@ -378,21 +380,22 @@ export default function TierListBuilder() {
         })
         if (filePath) {
           await writeFile(filePath, bytes)
-          setExportMsg(`✅ Saved to ${filePath}`)
+          setSavedPath(filePath)
+          setShareOpen(true)
         }
       } catch {
         const a = document.createElement('a')
         a.href = dataUrl
         a.download = `${list.name.replace(/[^a-z0-9]/gi, '_')}_tierlist.png`
         a.click()
-        setExportMsg('✅ Image downloaded')
+        setSavedPath('downloaded')
+        setShareOpen(true)
       }
     } catch (err) {
       setExportMsg('❌ Export failed')
       console.error('Export error:', err)
     } finally {
       setExporting(false)
-      setTimeout(() => setExportMsg(''), 4000)
     }
   }, [list])
 
@@ -529,6 +532,112 @@ export default function TierListBuilder() {
         onClose={() => setSearchOpen(false)}
         onAddGame={(game, tierId) => addGame(list.id, tierId, game)}
       />
+
+      {/* Share Sheet Modal */}
+      {shareOpen && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={e => e.target === e.currentTarget && setShareOpen(false)}
+        >
+          <div className="bg-[#14142a] border border-slate-700 rounded-t-3xl sm:rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div>
+                <h2 className="font-display text-xl font-bold tracking-wide">Share Your List</h2>
+                {savedPath && savedPath !== 'downloaded' && (
+                  <p className="text-xs text-slate-500 font-mono mt-0.5 truncate max-w-[280px]">
+                    ✅ Saved: {savedPath.split('/').pop()}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setShareOpen(false)}
+                className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700 flex items-center justify-center text-sm transition-colors"
+              >✕</button>
+            </div>
+
+            {/* Share options */}
+            <div className="p-4 flex flex-col gap-3">
+
+              {/* Twitter/X */}
+              <button
+                onClick={() => {
+                  const text = encodeURIComponent(`Check out my ${list.name} tier list! 🎮 Made with TierUp #TierUp #Gaming`)
+                  openUrl(`https://twitter.com/intent/tweet?text=${text}`)
+                }}
+                className="flex items-center gap-4 p-4 bg-[#0e0e1a] border border-slate-800 rounded-xl hover:border-[#1d9bf0] hover:bg-[#0e0e1a]/80 transition-all group"
+              >
+                <div className="w-11 h-11 rounded-xl bg-black flex items-center justify-center flex-shrink-0 text-xl">𝕏</div>
+                <div className="flex-1 text-left">
+                  <div className="font-display font-bold text-base tracking-wide">Share on X</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Opens X with pre-filled text — attach your saved image</div>
+                </div>
+                <span className="text-slate-600 group-hover:text-slate-400">→</span>
+              </button>
+
+              {/* Reddit */}
+              <button
+                onClick={() => {
+                  const title = encodeURIComponent(`My ${list.name} Tier List 🎮`)
+                  openUrl(`https://www.reddit.com/submit?title=${title}&type=image`)
+                }}
+                className="flex items-center gap-4 p-4 bg-[#0e0e1a] border border-slate-800 rounded-xl hover:border-[#ff4500] hover:bg-[#0e0e1a]/80 transition-all group"
+              >
+                <div className="w-11 h-11 rounded-xl bg-[#ff4500] flex items-center justify-center flex-shrink-0 text-xl">🤖</div>
+                <div className="flex-1 text-left">
+                  <div className="font-display font-bold text-base tracking-wide">Share on Reddit</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Post to a gaming subreddit — attach your saved image</div>
+                </div>
+                <span className="text-slate-600 group-hover:text-slate-400">→</span>
+              </button>
+
+              {/* Copy text */}
+              <button
+                onClick={() => {
+                  const tiers = TIER_ORDER
+                    .filter(tid => list.tiers[tid].length > 0)
+                    .map(tid => {
+                      const games = list.tiers[tid].map(g => g.title).join(', ')
+                      return `${TIER_META[tid].label}: ${games}`
+                    })
+                    .join('\n')
+                  const text = list.name + '\n' + '\u2500'.repeat(30) + '\n' + tiers + '\n\nMade with TierUp 🎮'
+                  navigator.clipboard.writeText(text)
+                  setExportMsg('📋 Tier list copied to clipboard!')
+                  setShareOpen(false)
+                  setTimeout(() => setExportMsg(''), 3000)
+                }}
+                className="flex items-center gap-4 p-4 bg-[#0e0e1a] border border-slate-800 rounded-xl hover:border-violet-600 hover:bg-[#0e0e1a]/80 transition-all group"
+              >
+                <div className="w-11 h-11 rounded-xl bg-violet-900/50 flex items-center justify-center flex-shrink-0 text-xl">📋</div>
+                <div className="flex-1 text-left">
+                  <div className="font-display font-bold text-base tracking-wide">Copy as Text</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Copy tier list as formatted text for Discord, messages, etc.</div>
+                </div>
+                <span className="text-slate-600 group-hover:text-slate-400">→</span>
+              </button>
+              {/* Save again */}
+              <button
+                onClick={() => { setShareOpen(false); handleExport() }}
+                className="flex items-center gap-4 p-4 bg-[#0e0e1a] border border-slate-800 rounded-xl hover:border-slate-600 hover:bg-[#0e0e1a]/80 transition-all group"
+              >
+                <div className="w-11 h-11 rounded-xl bg-slate-800 flex items-center justify-center flex-shrink-0 text-xl">📸</div>
+                <div className="flex-1 text-left">
+                  <div className="font-display font-bold text-base tracking-wide">Save Image Again</div>
+                  <div className="text-xs text-slate-400 mt-0.5">Export another copy of the PNG</div>
+                </div>
+                <span className="text-slate-600 group-hover:text-slate-400">→</span>
+              </button>
+            </div>
+            {/* Tip */}
+            <div className="px-5 pb-5 text-center">
+              <p className="text-xs text-slate-600 font-mono">
+                💡 Tip: Save the image first, then attach it when posting to social media
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
