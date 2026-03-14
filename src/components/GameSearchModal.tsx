@@ -1,214 +1,315 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { Search, X, Plus, Image } from 'lucide-react'
-import { searchGames, rawgToGame } from '../lib/rawg'
-import type { Game } from '../store/useTierStore'
-import { Button } from './Button'
-import { clsx } from 'clsx'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { searchGames, RAWG_GENRES, GENRE_LABELS } from '../lib/rawg'
+import type { SearchResult } from '../lib/rawg'
+import type { TierId, Game } from '../store/useTierStore'
+import { TIER_META, TIER_ORDER } from '../store/useTierStore'
+import Button from './Button'
 
 interface GameSearchModalProps {
-  onSelect: (game: Game) => void
+  open: boolean
+  defaultTier?: TierId
   onClose: () => void
-  tierLabel?: string
+  onAddGame: (game: Game, tierId: TierId) => void
 }
 
-function uid() {
-  return 'manual-' + Math.random().toString(36).slice(2)
-}
+type Tab = 'search' | 'manual'
 
-export function GameSearchModal({ onSelect, onClose, tierLabel }: GameSearchModalProps) {
+export default function GameSearchModal({
+  open,
+  defaultTier,
+  onClose,
+  onAddGame,
+}: GameSearchModalProps) {
+  const [tab, setTab] = useState<Tab>('search')
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Game[]>([])
+  const [genre, setGenre] = useState('All')
+  const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [manualMode, setManualMode] = useState(false)
+  const [selectedGame, setSelectedGame] = useState<SearchResult | null>(null)
+  const [selectedTier, setSelectedTier] = useState<TierId>(defaultTier ?? 'b')
+
+  // Manual entry
   const [manualTitle, setManualTitle] = useState('')
+  const [manualCover, setManualCover] = useState('')
   const [manualPlatform, setManualPlatform] = useState('')
-  const [manualYear, setManualYear] = useState('')
-  const [manualImg, setManualImg] = useState('')
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [manualYear, setManualYear] = useState(new Date().getFullYear().toString())
+
   const inputRef = useRef<HTMLInputElement>(null)
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => { inputRef.current?.focus() }, [])
-
-  const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); return }
-    setLoading(true); setError('')
-    try {
-      const raw = await searchGames(q)
-      setResults(raw.map(rawgToGame))
-    } catch {
-      setError('Search failed. Check your RAWG API key or try again.')
+  useEffect(() => {
+    if (open) {
+      setQuery('')
       setResults([])
-    } finally {
-      setLoading(false)
+      setSelectedGame(null)
+      setSelectedTier(defaultTier ?? 'b')
+      setTab('search')
+      setTimeout(() => inputRef.current?.focus(), 100)
     }
+  }, [open, defaultTier])
+
+  const doSearch = useCallback(async (q: string, g: string) => {
+    if (!q.trim()) { setResults([]); return }
+    setLoading(true)
+    const r = await searchGames(q, g === 'All' ? undefined : g)
+    setResults(r)
+    setLoading(false)
   }, [])
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value
-    setQuery(val)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => doSearch(val), 400)
+  const handleQueryChange = (q: string) => {
+    setQuery(q)
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => doSearch(q, genre), 400)
+  }
+
+  const handleGenreChange = (g: string) => {
+    setGenre(g)
+    doSearch(query, g)
+  }
+
+  const handleAdd = () => {
+    if (!selectedGame) return
+    const game: Game = {
+      id: selectedGame.id,
+      title: selectedGame.title,
+      cover: selectedGame.cover,
+      platform: selectedGame.platform,
+      year: selectedGame.year,
+      genre: selectedGame.genre,
+    }
+    onAddGame(game, selectedTier)
+    onClose()
   }
 
   const handleManualAdd = () => {
     if (!manualTitle.trim()) return
-    onSelect({
-      id: uid(),
+    const game: Game = {
+      id: `manual-${Date.now()}`,
       title: manualTitle.trim(),
-      coverUrl: manualImg,
-      platform: manualPlatform || 'Unknown',
-      releaseYear: manualYear || '—',
-      isManual: true,
-    })
+      cover: manualCover.trim(),
+      platform: manualPlatform.trim() || 'Unknown',
+      year: parseInt(manualYear) || new Date().getFullYear(),
+      genre: 'Unknown',
+    }
+    onAddGame(game, selectedTier)
     onClose()
+    setManualTitle('')
+    setManualCover('')
+    setManualPlatform('')
   }
+
+  if (!open) return null
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={e => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-brand-surface border border-brand-border rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]">
+      <div className="bg-[#14142a] border border-slate-700 rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+
+        {/* Handle */}
+        <div className="flex justify-center pt-3 pb-1 sm:hidden">
+          <div className="w-10 h-1 bg-slate-600 rounded-full" />
+        </div>
+
         {/* Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-brand-border">
-          <div>
-            <h2 className="font-bold text-lg text-brand-text">Add Game</h2>
-            {tierLabel && <p className="text-brand-sub text-sm">Adding to Tier <span className="font-semibold text-brand-text">{tierLabel}</span></p>}
-          </div>
-          <button onClick={onClose} className="text-brand-sub hover:text-brand-text transition-colors">
-            <X size={20} />
-          </button>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+          <h2 className="font-display text-xl font-bold tracking-wide">Add Game</h2>
+          <Button variant="icon" size="sm" onClick={onClose}>✕</Button>
         </div>
 
-        {/* Mode toggle */}
-        <div className="flex gap-2 px-5 pt-4">
-          <button
-            onClick={() => setManualMode(false)}
-            className={clsx('flex-1 py-2 rounded-lg text-sm font-semibold transition-colors', !manualMode ? 'bg-brand-accent text-white' : 'bg-brand-card text-brand-sub hover:text-brand-text')}
-          >
-            <Search size={14} className="inline mr-1.5" />Search Database
-          </button>
-          <button
-            onClick={() => setManualMode(true)}
-            className={clsx('flex-1 py-2 rounded-lg text-sm font-semibold transition-colors', manualMode ? 'bg-brand-accent text-white' : 'bg-brand-card text-brand-sub hover:text-brand-text')}
-          >
-            <Plus size={14} className="inline mr-1.5" />Manual Entry
-          </button>
+        {/* Tabs */}
+        <div className="flex border-b border-slate-800">
+          {(['search', 'manual'] as Tab[]).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex-1 py-3 text-sm font-semibold transition-colors capitalize
+                ${tab === t
+                  ? 'text-violet-400 border-b-2 border-violet-500'
+                  : 'text-slate-500 hover:text-slate-300'
+                }`}
+            >
+              {t === 'search' ? '🔍 Search Database' : '✏️ Manual Entry'}
+            </button>
+          ))}
         </div>
 
-        {!manualMode ? (
-          <>
-            {/* Search input */}
-            <div className="px-5 pt-3 pb-2">
-              <div className="relative">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-sub" />
-                <input
-                  ref={inputRef}
-                  value={query}
-                  onChange={handleChange}
-                  placeholder="Search for a game…"
-                  className="w-full bg-brand-card border border-brand-border rounded-lg pl-9 pr-4 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors"
-                />
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+
+          {tab === 'search' && (
+            <div className="p-4 flex flex-col gap-3 h-full">
+              {/* Search input */}
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={e => handleQueryChange(e.target.value)}
+                placeholder="Search 500,000+ games..."
+                className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30"
+              />
+
+              {/* Genre chips */}
+              <div className="flex gap-2 flex-wrap">
+                {RAWG_GENRES.map(g => (
+                  <button
+                    key={g}
+                    onClick={() => handleGenreChange(g)}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
+                      ${genre === g
+                        ? 'bg-violet-600 border-violet-600 text-white'
+                        : 'border-slate-700 text-slate-400 hover:border-violet-500 hover:text-slate-200'
+                      }`}
+                  >
+                    {GENRE_LABELS[g]}
+                  </button>
+                ))}
               </div>
-            </div>
 
-            {/* Results */}
-            <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-2 min-h-0">
+              {/* Results */}
               {loading && (
-                <div className="text-center py-10 text-brand-sub text-sm">Searching…</div>
+                <div className="text-center text-slate-500 text-sm py-8 font-mono">Searching…</div>
               )}
-              {error && (
-                <div className="text-center py-6 text-red-400 text-sm">{error}</div>
+
+              {!loading && results.length === 0 && query && (
+                <div className="text-center text-slate-500 text-sm py-8 font-mono">No results found</div>
               )}
-              {!loading && !error && results.length === 0 && query.trim() && (
-                <div className="text-center py-10 text-brand-sub text-sm">No results found. Try manual entry.</div>
+
+              {!loading && results.length === 0 && !query && (
+                <div className="text-center text-slate-600 text-sm py-8 font-mono">Type to search games</div>
               )}
-              {!loading && !error && results.length === 0 && !query.trim() && (
-                <div className="text-center py-8 space-y-2">
-                  <p className="text-brand-sub text-sm opacity-60">Start typing to search 500,000+ games</p>
-                  {!import.meta.env.VITE_RAWG_API_KEY && (
-                    <p className="text-xs text-yellow-500/70 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-2 mx-4">
-                      💡 Add a free RAWG API key in <code className="font-mono">.env</code> for full search access
-                    </p>
-                  )}
+
+              {!loading && results.length > 0 && (
+                <div className="grid grid-cols-3 gap-2.5 overflow-y-auto pb-2">
+                  {results.map(game => (
+                    <button
+                      key={game.id}
+                      onClick={() => setSelectedGame(game)}
+                      className={`rounded-xl overflow-hidden border transition-all text-left
+                        ${selectedGame?.id === game.id
+                          ? 'border-violet-500 shadow-[0_0_12px_rgba(124,58,237,0.4)] scale-[1.02]'
+                          : 'border-slate-700 hover:border-violet-600 hover:-translate-y-0.5'
+                        }`}
+                    >
+                      {game.cover ? (
+                        <img
+                          src={game.cover}
+                          alt={game.title}
+                          className="w-full aspect-[3/4] object-cover"
+                        />
+                      ) : (
+                        <div className="w-full aspect-[3/4] bg-slate-800 flex items-center justify-center p-2">
+                          <span className="text-[9px] text-slate-400 text-center leading-tight">{game.title}</span>
+                        </div>
+                      )}
+                      <div className="p-1.5">
+                        <div className="text-[10px] font-semibold text-white leading-tight truncate">{game.title}</div>
+                        <div className="text-[9px] text-slate-500 font-mono">{game.year}</div>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               )}
-              {results.map(game => (
-                <button
-                  key={game.id}
-                  onClick={() => { onSelect(game); onClose() }}
-                  className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-brand-card border border-brand-border hover:border-brand-accent transition-all text-left group"
-                >
-                  {game.coverUrl ? (
-                    <img src={game.coverUrl} alt={game.title} className="w-12 h-16 rounded-md object-cover flex-shrink-0" />
-                  ) : (
-                    <div className="w-12 h-16 rounded-md bg-brand-muted flex items-center justify-center flex-shrink-0">
-                      <Image size={16} className="text-brand-sub" />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm text-brand-text group-hover:text-white truncate">{game.title}</p>
-                    <p className="text-xs text-brand-sub mt-0.5">{game.platform} · {game.releaseYear}</p>
-                  </div>
-                  <Plus size={16} className="text-brand-sub group-hover:text-brand-accent flex-shrink-0" />
-                </button>
-              ))}
             </div>
-          </>
-        ) : (
-          /* Manual entry form */
-          <div className="p-5 space-y-3">
-            <div>
-              <label className="text-xs text-brand-sub mb-1 block">Game Title *</label>
+          )}
+
+          {tab === 'manual' && (
+            <div className="p-4 flex flex-col gap-3">
               <input
-                autoFocus
                 value={manualTitle}
                 onChange={e => setManualTitle(e.target.value)}
-                placeholder="e.g. My Indie Gem"
-                className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors"
+                placeholder="Game title *"
+                className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
               />
-            </div>
-            <div className="flex gap-2">
-              <div className="flex-1">
-                <label className="text-xs text-brand-sub mb-1 block">Platform</label>
+              <input
+                value={manualCover}
+                onChange={e => setManualCover(e.target.value)}
+                placeholder="Cover image URL (optional)"
+                className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
+              />
+              <div className="flex gap-3">
                 <input
                   value={manualPlatform}
                   onChange={e => setManualPlatform(e.target.value)}
-                  placeholder="PC, PS5, Switch…"
-                  className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors"
+                  placeholder="Platform (e.g. PS5)"
+                  className="flex-1 bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
                 />
-              </div>
-              <div className="w-24">
-                <label className="text-xs text-brand-sub mb-1 block">Year</label>
                 <input
                   value={manualYear}
                   onChange={e => setManualYear(e.target.value)}
-                  placeholder="2024"
-                  maxLength={4}
-                  className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors"
+                  placeholder="Year"
+                  type="number"
+                  className="w-24 bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
                 />
               </div>
+
+              {/* Cover preview */}
+              {manualCover && (
+                <div className="flex items-center gap-3 bg-[#0e0e1a] rounded-xl p-3 border border-slate-800">
+                  <img
+                    src={manualCover}
+                    alt="preview"
+                    className="w-12 h-16 object-cover rounded-lg border border-slate-700"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                  <span className="text-xs text-slate-400 font-mono">Cover preview</span>
+                </div>
+              )}
             </div>
-            <div>
-              <label className="text-xs text-brand-sub mb-1 block">Cover Image URL (optional)</label>
-              <input
-                value={manualImg}
-                onChange={e => setManualImg(e.target.value)}
-                placeholder="https://…"
-                className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors"
-              />
+          )}
+        </div>
+
+        {/* Footer — tier picker + add button */}
+        <div className="border-t border-slate-800 p-4 flex flex-col gap-3">
+          {/* Selected game info */}
+          {tab === 'search' && selectedGame && (
+            <div className="flex items-center gap-3 bg-[#0e0e1a] rounded-xl p-2.5 border border-slate-800">
+              {selectedGame.cover && (
+                <img src={selectedGame.cover} alt={selectedGame.title} className="w-9 h-12 object-cover rounded-md" />
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold truncate">{selectedGame.title}</div>
+                <div className="text-xs text-slate-400 font-mono">{selectedGame.platform} · {selectedGame.year}</div>
+              </div>
             </div>
-            <Button
-              onClick={handleManualAdd}
-              disabled={!manualTitle.trim()}
-              className="w-full justify-center"
-              size="md"
-            >
-              <Plus size={16} /> Add Game
-            </Button>
+          )}
+
+          {/* Tier picker */}
+          <div className="grid grid-cols-6 gap-1.5">
+            {TIER_ORDER.map(tid => {
+              const m = TIER_META[tid]
+              return (
+                <button
+                  key={tid}
+                  onClick={() => setSelectedTier(tid)}
+                  className={`py-2 rounded-lg font-display font-bold text-lg border-2 transition-all
+                    ${selectedTier === tid
+                      ? 'scale-110 shadow-lg'
+                      : 'border-transparent opacity-50 hover:opacity-80'
+                    }`}
+                  style={{
+                    color: m.color,
+                    backgroundColor: m.bg,
+                    borderColor: selectedTier === tid ? m.color : 'transparent',
+                  }}
+                >
+                  {m.label}
+                </button>
+              )
+            })}
           </div>
-        )}
+
+          {/* Add button */}
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
+            onClick={tab === 'search' ? handleAdd : handleManualAdd}
+            disabled={tab === 'search' ? !selectedGame : !manualTitle.trim()}
+          >
+            Add to {TIER_META[selectedTier].label} Tier
+          </Button>
+        </div>
       </div>
     </div>
   )

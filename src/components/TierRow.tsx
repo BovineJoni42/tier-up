@@ -1,87 +1,86 @@
-import { useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable'
-import { Plus } from 'lucide-react'
-import { clsx } from 'clsx'
-import { SortableGameCard } from './GameCard'
-import type { Tier, Game } from '../store/useTierStore'
+import GameCard from './GameCard'
+import type { Game, TierId } from '../store/useTierStore'
+import { TIER_META } from '../store/useTierStore'
 
 interface TierRowProps {
-  tier: Tier
+  tierId: TierId
+  games: Game[]
   listId: string
-  topFiveIds: Set<string>
-  onAddGame: (tierId: string) => void
-  onRemoveGame: (tierId: string, gameId: string) => void
-  onToggleTopFive: (game: Game) => void
+  top5Ids: string[]
+  onRemoveGame: (tierId: TierId, gameId: string) => void
+  onToggleTop5: (gameId: string) => void
+  onAddGame: (tierId: TierId) => void
 }
 
-export function TierRow({ tier, topFiveIds, onAddGame, onRemoveGame, onToggleTopFive }: TierRowProps) {
-  const { setNodeRef, isOver } = useDroppable({ id: `tier-${tier.id}` })
-  const [hovered, setHovered] = useState(false)
+export default function TierRow({
+  tierId,
+  games,
+  listId,
+  top5Ids,
+  onRemoveGame,
+  onToggleTop5,
+  onAddGame,
+}: TierRowProps) {
+  const meta = TIER_META[tierId]
 
-  const glowClass = {
-    S: 'tier-glow-s',
-    A: 'tier-glow-a',
-    B: 'tier-glow-b',
-  }[tier.label] ?? ''
+  // The entire row is the droppable target — much larger hit area
+  const { setNodeRef, isOver } = useDroppable({
+    id: `tier::${tierId}`,
+    data: { tierId },
+  })
+
+  const sortableIds = games.map(g => `${tierId}::${g.id}`)
 
   return (
     <div
       ref={setNodeRef}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className={clsx(
-        'flex items-stretch min-h-[7.5rem] rounded-xl border transition-all duration-150',
-        isOver
-          ? 'border-brand-accent bg-brand-accent/10 shadow-glow'
-          : 'border-brand-border bg-brand-card hover:border-brand-muted'
-      )}
+      className={`flex items-stretch rounded-xl border transition-all duration-150 min-h-[90px]
+        ${isOver
+          ? 'border-violet-500 shadow-[0_0_16px_rgba(124,58,237,0.35)] bg-violet-950/20'
+          : 'border-slate-800'
+        }`}
     >
-      {/* Tier label slab */}
+      {/* Tier label */}
       <div
-        className={clsx(
-          'w-14 flex-shrink-0 flex items-center justify-center rounded-l-xl font-black text-2xl select-none transition-shadow duration-200',
-          (hovered || isOver) ? glowClass : ''
-        )}
-        style={{
-          backgroundColor: tier.color + '20',
-          color: tier.color,
-          borderRight: `2px solid ${tier.color}35`,
-        }}
+        className="w-14 flex-shrink-0 flex items-center justify-center rounded-l-xl font-display text-2xl font-bold select-none"
+        style={{ backgroundColor: meta.bg, color: meta.color }}
       >
-        {tier.label}
+        {meta.label}
       </div>
 
       {/* Games area */}
-      <SortableContext
-        items={tier.games.map(g => `${tier.id}::${g.id}`)}
-        strategy={horizontalListSortingStrategy}
-      >
-        <div className="flex-1 flex items-center gap-2 p-3 flex-wrap min-h-[7.5rem]">
-          {tier.games.map(game => (
-            <SortableGameCard
-              key={game.id}
-              id={`${tier.id}::${game.id}`}
-              game={game}
-              isTopFive={topFiveIds.has(game.id)}
-              onRemove={() => onRemoveGame(tier.id, game.id)}
-              onToggleTopFive={() => onToggleTopFive(game)}
-            />
-          ))}
-
-          {/* Drop hint when empty */}
-          {tier.games.length === 0 && !isOver && (
-            <span className="text-xs text-brand-muted italic pointer-events-none select-none mr-2">
-              Drop games here…
+      <SortableContext items={sortableIds} strategy={horizontalListSortingStrategy}>
+        <div className="flex-1 flex flex-wrap gap-2 p-2.5 bg-[#0e0e1a] rounded-r-xl min-h-[88px] items-start content-start">
+          {games.length === 0 ? (
+            <span className="text-xs text-slate-600 font-mono self-center pl-1">
+              {isOver ? '📥 Drop here' : 'Drop games here'}
             </span>
+          ) : (
+            games.map(game => (
+              <GameCard
+                key={game.id}
+                game={game}
+                listId={listId}
+                tierId={tierId}
+                isInTop5={top5Ids.includes(game.id)}
+                top5Full={top5Ids.length >= 5}
+                onRemove={() => onRemoveGame(tierId, game.id)}
+                onToggleTop5={() => onToggleTop5(game.id)}
+              />
+            ))
           )}
 
           {/* Add game button */}
           <button
-            onClick={() => onAddGame(tier.id)}
-            className="w-20 h-28 rounded-md border-2 border-dashed border-brand-muted hover:border-brand-accent text-brand-sub hover:text-brand-accent transition-all flex items-center justify-center flex-shrink-0 group"
+            className="w-[62px] h-[82px] rounded-lg border-2 border-dashed border-slate-700
+              flex items-center justify-center text-slate-600 text-xl flex-shrink-0
+              hover:border-violet-600 hover:text-violet-400 transition-colors"
+            onClick={() => onAddGame(tierId)}
+            title={`Add game to ${meta.label}`}
           >
-            <Plus size={20} className="group-hover:scale-110 transition-transform" />
+            ＋
           </button>
         </div>
       </SortableContext>

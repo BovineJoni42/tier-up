@@ -7,9 +7,10 @@
     "core:default",
     "opener:default",
     "dialog:allow-save",
-    "fs:allow-write-text-file",
     "fs:allow-write-file",
     "fs:allow-read-file",
-    "fs:scope-download-recursive"
+    "fs:allow-write-text-file",
+    "fs:scope-download-recursive",
+    "fs:scope-home-recursive"
   ]
 }

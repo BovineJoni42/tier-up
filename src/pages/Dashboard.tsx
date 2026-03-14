@@ -1,202 +1,245 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, MoreVertical, Copy, Pencil, Trash2, Trophy, LayoutGrid } from 'lucide-react'
 import { useTierStore } from '../store/useTierStore'
-import { Button } from '../components/Button'
-import { clsx } from 'clsx'
+import { TIER_META, TIER_ORDER } from '../store/useTierStore'
+import Button from '../components/Button'
 
-function NewListModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
-  const [name, setName] = useState('')
-  const submit = () => { if (name.trim()) { onCreate(name.trim()); onClose() } }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-brand-surface border border-brand-border rounded-2xl w-full max-w-sm p-6 shadow-2xl">
-        <h2 className="text-lg font-bold mb-4">New Tier List</h2>
-        <input
-          autoFocus
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && submit()}
-          placeholder="e.g. My All-Time Favorites"
-          className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text placeholder-brand-sub outline-none focus:border-brand-accent transition-colors mb-4"
-        />
-        <div className="flex gap-2 justify-end">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={!name.trim()}>Create List</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function RenameModal({ initial, onClose, onSave }: { initial: string; onClose: () => void; onSave: (name: string) => void }) {
-  const [name, setName] = useState(initial)
-  const submit = () => { if (name.trim()) { onSave(name.trim()); onClose() } }
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-brand-surface border border-brand-border rounded-2xl w-full max-w-sm p-6 shadow-2xl">
-        <h2 className="text-lg font-bold mb-4">Rename List</h2>
-        <input
-          autoFocus
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && submit()}
-          className="w-full bg-brand-card border border-brand-border rounded-lg px-3 py-2.5 text-sm text-brand-text outline-none focus:border-brand-accent transition-colors mb-4"
-        />
-        <div className="flex gap-2 justify-end">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={!name.trim()}>Save</Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-export function Dashboard() {
+export default function Dashboard() {
   const navigate = useNavigate()
-  const { lists, createList, deleteList, duplicateList, renameList } = useTierStore()
-  const [showNew, setShowNew] = useState(false)
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
-  const [renameId, setRenameId] = useState<string | null>(null)
+  const { lists, createList, renameList, duplicateList, deleteList } = useTierStore()
+  const [showNewModal, setShowNewModal] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
-  const renameTarget = lists.find(l => l.id === renameId)
+  const handleCreate = () => {
+    if (!newName.trim()) return
+    const id = createList(newName.trim())
+    setNewName('')
+    setShowNewModal(false)
+    navigate(`/list/${id}`)
+  }
+
+  const handleRename = (id: string) => {
+    if (!renameValue.trim()) return
+    renameList(id, renameValue.trim())
+    setRenamingId(null)
+  }
+
+  const handleDelete = (id: string) => {
+    deleteList(id)
+    setConfirmDeleteId(null)
+  }
 
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-text">
-      {/* Header */}
-      <header className="border-b border-brand-border bg-brand-surface/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-brand-accent flex items-center justify-center shadow-glow">
-              <Trophy size={16} className="text-white" />
-            </div>
-            <span className="font-black text-xl tracking-tight">TierUp</span>
-          </div>
-          <Button onClick={() => setShowNew(true)}>
-            <Plus size={16} /> New List
-          </Button>
-        </div>
-      </header>
+    <div className="min-h-screen bg-[#08080f] text-white flex flex-col">
+      {/* Scanline overlay */}
+      <div className="fixed inset-0 pointer-events-none z-50"
+        style={{
+          background: 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.025) 2px,rgba(0,0,0,0.025) 4px)'
+        }}
+      />
 
-      <main className="max-w-6xl mx-auto px-6 py-10">
+      {/* Navbar */}
+      <nav className="sticky top-0 z-40 flex items-center justify-between px-5 h-[60px] bg-[#08080f]/90 border-b border-slate-800 backdrop-blur-xl">
+        <span className="font-display text-3xl font-bold tracking-[3px] bg-gradient-to-br from-violet-400 to-purple-500 bg-clip-text text-transparent">
+          TIERUP
+        </span>
+        <Button variant="primary" onClick={() => setShowNewModal(true)}>
+          + New List
+        </Button>
+      </nav>
+
+      {/* Content */}
+      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6">
+        <h1 className="font-display text-2xl font-bold tracking-wide mb-5">My Lists</h1>
+
         {lists.length === 0 ? (
-          /* Empty state */
-          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-            <div className="w-20 h-20 rounded-2xl bg-brand-card border border-brand-border flex items-center justify-center mb-6">
-              <LayoutGrid size={36} className="text-brand-muted" />
-            </div>
-            <h2 className="text-2xl font-bold mb-2">No tier lists yet</h2>
-            <p className="text-brand-sub mb-8 max-w-xs">Create your first tier list and start ranking your favorite games.</p>
-            <Button size="lg" onClick={() => setShowNew(true)}>
-              <Plus size={18} /> Create Your First List
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <div className="text-5xl">🎮</div>
+            <p className="text-slate-400 font-mono text-sm">No tier lists yet</p>
+            <Button variant="primary" onClick={() => setShowNewModal(true)}>
+              Create your first list
             </Button>
           </div>
         ) : (
-          <>
-            <div className="flex items-center justify-between mb-6">
-              <h1 className="text-2xl font-bold">My Tier Lists <span className="text-brand-sub font-normal text-lg">({lists.length})</span></h1>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {lists.map(list => {
-                const gameCount = list.tiers.reduce((s, t) => s + t.games.length, 0)
-                const previewGames = list.tiers.flatMap(t => t.games).slice(0, 6)
-                return (
-                  <div
-                    key={list.id}
-                    className="group bg-brand-card border border-brand-border rounded-2xl overflow-hidden hover:border-brand-accent transition-all duration-200 cursor-pointer relative"
-                    onClick={() => navigate(`/list/${list.id}`)}
-                  >
-                    {/* Cover art preview */}
-                    <div className="h-28 bg-brand-surface flex items-center justify-center overflow-hidden relative">
-                      {previewGames.length > 0 ? (
-                        <div className="flex gap-1 px-2">
-                          {previewGames.map(g => (
-                            <img key={g.id} src={g.coverUrl} alt={g.title}
-                              className="w-12 h-16 object-cover rounded flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity" />
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-brand-muted flex flex-col items-center gap-2">
-                          <LayoutGrid size={28} />
-                          <span className="text-xs">No games yet</span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-brand-card via-transparent to-transparent" />
-                    </div>
+          <div className="flex flex-col gap-3">
+            {lists.map(list => {
+              const totalGames = TIER_ORDER.reduce(
+                (sum, tid) => sum + list.tiers[tid].length, 0
+              )
+              const tiersUsed = TIER_ORDER.filter(tid => list.tiers[tid].length > 0)
 
-                    <div className="p-4">
-                      <h3 className="font-bold text-base truncate mb-1">{list.name}</h3>
-                      <p className="text-brand-sub text-xs">
-                        {gameCount} game{gameCount !== 1 ? 's' : ''}
-                        {list.topFive.length > 0 && ` · ${list.topFive.length} in Top 5`}
-                      </p>
+              return (
+                <div
+                  key={list.id}
+                  className="group relative bg-[#1a1a2e] border border-slate-800 rounded-2xl p-4 cursor-pointer
+                    hover:border-violet-700 hover:bg-[#1e1e38] hover:translate-x-0.5 transition-all duration-150
+                    before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:bg-gradient-to-b
+                    before:from-violet-600 before:to-purple-500 before:rounded-l-2xl"
+                  onClick={() => navigate(`/list/${list.id}`)}
+                >
+                  {renamingId === list.id ? (
+                    <div
+                      className="flex gap-2"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleRename(list.id)
+                          if (e.key === 'Escape') setRenamingId(null)
+                        }}
+                        className="flex-1 bg-[#0e0e1a] border border-violet-600 rounded-lg px-3 py-1.5 text-sm outline-none"
+                      />
+                      <Button size="sm" onClick={() => handleRename(list.id)}>Save</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setRenamingId(null)}>Cancel</Button>
                     </div>
-
-                    {/* Actions menu */}
-                    <div className="absolute top-2 right-2">
-                      <button
-                        onClick={e => { e.stopPropagation(); setMenuOpenId(menuOpenId === list.id ? null : list.id) }}
-                        className={clsx(
-                          'p-1.5 rounded-lg text-brand-sub hover:text-brand-text transition-colors',
-                          menuOpenId === list.id ? 'bg-brand-surface text-brand-text' : 'opacity-0 group-hover:opacity-100 bg-brand-card/80'
-                        )}
-                      >
-                        <MoreVertical size={16} />
-                      </button>
-                      {menuOpenId === list.id && (
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h2 className="font-display text-xl font-bold tracking-wide leading-tight">{list.name}</h2>
+                        {/* Actions - visible on hover */}
                         <div
-                          className="absolute right-0 top-8 w-44 bg-brand-surface border border-brand-border rounded-xl shadow-2xl z-20 py-1 overflow-hidden"
+                          className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                           onClick={e => e.stopPropagation()}
                         >
-                          <button onClick={() => { setRenameId(list.id); setMenuOpenId(null) }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-brand-card text-brand-text transition-colors">
-                            <Pencil size={14} className="text-brand-sub" /> Rename
-                          </button>
-                          <button onClick={() => { duplicateList(list.id); setMenuOpenId(null) }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-brand-card text-brand-text transition-colors">
-                            <Copy size={14} className="text-brand-sub" /> Duplicate
-                          </button>
-                          <div className="border-t border-brand-border my-1" />
-                          <button onClick={() => { deleteList(list.id); setMenuOpenId(null) }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-red-900/20 text-red-400 transition-colors">
-                            <Trash2 size={14} /> Delete
-                          </button>
+                          <Button
+                            variant="icon"
+                            size="sm"
+                            title="Rename"
+                            onClick={() => {
+                              setRenamingId(list.id)
+                              setRenameValue(list.name)
+                            }}
+                          >
+                            ✏️
+                          </Button>
+                          <Button
+                            variant="icon"
+                            size="sm"
+                            title="Duplicate"
+                            onClick={() => {
+                              const newId = duplicateList(list.id)
+                              navigate(`/list/${newId}`)
+                            }}
+                          >
+                            📋
+                          </Button>
+                          <Button
+                            variant="icon"
+                            size="sm"
+                            title="Delete"
+                            onClick={() => setConfirmDeleteId(list.id)}
+                          >
+                            🗑️
+                          </Button>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
+                      </div>
 
-              {/* New list card */}
-              <button
-                onClick={() => setShowNew(true)}
-                className="bg-brand-card/40 border-2 border-dashed border-brand-border hover:border-brand-accent rounded-2xl flex flex-col items-center justify-center gap-3 min-h-[11rem] transition-all text-brand-sub hover:text-brand-accent group"
-              >
-                <div className="w-12 h-12 rounded-full border-2 border-dashed border-current flex items-center justify-center group-hover:scale-110 transition-transform">
-                  <Plus size={22} />
+                      <p className="text-xs text-slate-400 font-mono mb-3">
+                        {totalGames} games · {tiersUsed.length} tiers used
+                      </p>
+
+                      {/* Tier badges */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {tiersUsed.map(tid => {
+                          const m = TIER_META[tid]
+                          return (
+                            <span
+                              key={tid}
+                              className="text-[10px] font-bold px-2 py-0.5 rounded font-display tracking-wider"
+                              style={{ backgroundColor: m.bg, color: m.color }}
+                            >
+                              {m.label} · {list.tiers[tid].length}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
-                <span className="text-sm font-semibold">New Tier List</span>
-              </button>
-            </div>
-          </>
+              )
+            })}
+
+            {/* Empty new list button */}
+            <button
+              onClick={() => setShowNewModal(true)}
+              className="w-full py-5 rounded-2xl border-2 border-dashed border-slate-700
+                text-slate-500 font-semibold text-sm hover:border-violet-600 hover:text-violet-400
+                hover:bg-violet-950/20 transition-all"
+            >
+              ＋ Create New List
+            </button>
+          </div>
         )}
       </main>
 
-      {showNew && <NewListModal onClose={() => setShowNew(false)} onCreate={name => createList(name)} />}
-      {renameTarget && (
-        <RenameModal
-          initial={renameTarget.name}
-          onClose={() => setRenameId(null)}
-          onSave={name => renameList(renameTarget.id, name)}
-        />
+      {/* Ad Banner */}
+      <div className="border-t border-slate-800 py-2.5 text-center text-xs text-slate-600 font-mono tracking-widest bg-[#08080f]">
+        📢 ADVERTISEMENT — Your ad here
+      </div>
+
+      {/* New List Modal */}
+      {showNewModal && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={e => e.target === e.currentTarget && setShowNewModal(false)}
+        >
+          <div className="bg-[#14142a] border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="w-10 h-1 bg-slate-600 rounded-full mx-auto mb-5" />
+            <h2 className="font-display text-xl font-bold text-center tracking-wide mb-5">New Tier List</h2>
+            <input
+              autoFocus
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              placeholder='e.g. "My Favorite RPGs"'
+              maxLength={50}
+              className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white
+                placeholder-slate-500 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500/30 mb-4"
+            />
+            <div className="flex gap-3">
+              <Button variant="ghost" className="flex-1" onClick={() => setShowNewModal(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                className="flex-2 flex-1"
+                onClick={handleCreate}
+                disabled={!newName.trim()}
+              >
+                Create List
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
-      {/* Close menu on outside click */}
-      {menuOpenId && (
-        <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
+      {/* Delete confirm modal */}
+      {confirmDeleteId && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={e => e.target === e.currentTarget && setConfirmDeleteId(null)}
+        >
+          <div className="bg-[#14142a] border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <h2 className="font-display text-xl font-bold text-center mb-2">Delete List?</h2>
+            <p className="text-slate-400 text-sm text-center mb-5">
+              This can't be undone. All games in this list will be lost.
+            </p>
+            <div className="flex gap-3">
+              <Button variant="ghost" className="flex-1" onClick={() => setConfirmDeleteId(null)}>
+                Cancel
+              </Button>
+              <Button variant="danger" className="flex-1" onClick={() => handleDelete(confirmDeleteId)}>
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

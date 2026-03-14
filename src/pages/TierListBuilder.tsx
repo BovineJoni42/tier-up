@@ -1,387 +1,362 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { useState, useRef, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
-  closestCenter,
+  rectIntersection,
   type DragStartEvent,
   type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  ArrowLeft,
-  Share2,
-  Star,
-  Trophy,
-  ImageDown,
-  Link2,
-  ChevronDown,
-  ChevronUp,
-  Check,
-} from "lucide-react";
-import { toPng } from "html-to-image";
-import { useTierStore } from "../store/useTierStore";
-import { TierRow } from "../components/TierRow";
-import { GameCard } from "../components/GameCard";
-import { GameSearchModal } from "../components/GameSearchModal";
-import { Button } from "../components/Button";
+  type DragOverEvent,
+  type CollisionDetection,
+} from '@dnd-kit/core'
+import { toPng } from 'html-to-image'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeFile } from '@tauri-apps/plugin-fs'
+import { useTierStore, TIER_ORDER, type TierId, type Game } from '../store/useTierStore'
+import TierRow from '../components/TierRow'
+import GameSearchModal from '../components/GameSearchModal'
+import { GameCardOverlay } from '../components/GameCard'
+import Button from '../components/Button'
 
-function parseId(compositeId: string) {
-  const idx = compositeId.indexOf("::");
-  if (idx === -1) return { tierId: compositeId, gameId: "" };
-  return {
-    tierId: compositeId.slice(0, idx),
-    gameId: compositeId.slice(idx + 2),
-  };
+function parseDndId(id: string): { tierId: TierId; gameId: string } | null {
+  const parts = id.split('::')
+  if (parts.length < 2) return null
+  return { tierId: parts[0] as TierId, gameId: parts[1] }
 }
 
-function Toast({ message, onDone }: { message: string; onDone: () => void }) {
-  useEffect(() => {
-    const t = setTimeout(onDone, 2200);
-    return () => clearTimeout(t);
-  }, [onDone]);
-  return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-brand-surface border border-brand-border text-brand-text text-sm px-4 py-2.5 rounded-xl shadow-2xl animate-fade-in max-w-[90vw]">
-      <Check size={15} className="text-green-400 flex-shrink-0" />
-      {message}
-    </div>
-  );
+// Build a collision detector that knows the current tier of the dragged item.
+// - If hovering over a DIFFERENT tier's droppable → return that tier
+// - If hovering over a game card in the SAME tier → return that card (for reorder)
+// - If hovering over a game card in a DIFFERENT tier → return that tier droppable
+function makeCollision(currentTierRef: React.MutableRefObject<TierId | null>): CollisionDetection {
+  return (args) => {
+    const currentTier = currentTierRef.current
+
+    // Check tier droppables first
+    const tierHits = rectIntersection({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(c =>
+        String(c.id).startsWith('tier::')
+      ),
+    })
+
+    if (tierHits.length > 0) {
+      const hitTierId = String(tierHits[0].id).replace('tier::', '')
+
+      // If we hit our OWN tier droppable, ignore it and check game cards instead
+      // so we can detect which card we're hovering for reordering
+      if (hitTierId === currentTier) {
+        const cardHits = rectIntersection({
+          ...args,
+          droppableContainers: args.droppableContainers.filter(c => {
+            const parsed = parseDndId(String(c.id))
+            return parsed !== null && parsed.tierId === currentTier
+          }),
+        })
+        if (cardHits.length > 0) return cardHits
+        return [] // hovering empty space in own tier — do nothing
+      }
+
+      // Hit a different tier — return it
+      return tierHits
+    }
+
+    // No tier hit — fall back to any card
+    return rectIntersection(args)
+  }
 }
 
-export function TierListBuilder() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const {
-    getList,
-    addGameToTier,
-    removeGame,
-    moveGame,
-    reorderGame,
-    toggleTopFive,
-  } = useTierStore();
+export default function TierListBuilder() {
+  const { id: listId } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const { getList, addGame, removeGame, moveGame, reorderGame, addToTop5, removeFromTop5 } = useTierStore()
 
-  const list = getList(id!);
-  const [addingToTier, setAddingToTier] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [showShare, setShowShare] = useState(false);
-  const [showTopFive, setShowTopFive] = useState(true);
-  const [toast, setToast] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
-  const exportRef = useRef<HTMLDivElement>(null);
+  const list = getList(listId ?? '')
+
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [defaultSearchTier, setDefaultSearchTier] = useState<TierId>('b')
+  const [activeGame, setActiveGame] = useState<Game | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportMsg, setExportMsg] = useState('')
+
+  const dragGameId = useRef<string | null>(null)
+  const dragCurrentTier = useRef<TierId | null>(null)
+
+  // Collision detector reads from the ref so it always knows current tier
+  const collisionDetection = useRef(makeCollision(dragCurrentTier)).current
+
+  const exportRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-  );
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
 
-  // Close share menu & modals on Escape
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setShowShare(false);
-        setAddingToTier(null);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const handleDragStart = (e: DragStartEvent) => {
+    const parsed = parseDndId(String(e.active.id))
+    if (parsed && list) {
+      const game = list.tiers[parsed.tierId].find(g => g.id === parsed.gameId)
+      setActiveGame(game ?? null)
+      dragGameId.current = parsed.gameId
+      dragCurrentTier.current = parsed.tierId
+    }
+  }
 
-  const showToast = useCallback((msg: string) => setToast(msg), []);
+  const handleDragOver = (e: DragOverEvent) => {
+    if (!e.over || !listId || !dragGameId.current || !dragCurrentTier.current) return
 
-  const handleDragStart = (e: DragStartEvent) =>
-    setActiveId(String(e.active.id));
+    const overId = String(e.over.id)
+    const gameId = dragGameId.current
+    const fromTier = dragCurrentTier.current
 
-  const handleDragEnd = (e: DragEndEvent) => {
-    setActiveId(null);
-    const { active, over } = e;
-    if (!over || !list) return;
-
-    const activeComposite = String(active.id);
-    const overComposite = String(over.id);
-    const { tierId: activeTier, gameId: activeGame } = parseId(activeComposite);
-
-    if (overComposite.startsWith("tier-")) {
-      const targetTierId = overComposite.replace("tier-", "");
-      if (activeTier !== targetTierId) {
-        moveGame(list.id, activeTier, targetTierId, activeGame, 0);
-      }
-      return;
+    // ── Dropped onto a different tier droppable ──
+    if (overId.startsWith('tier::')) {
+      const toTier = overId.replace('tier::', '') as TierId
+      if (toTier === fromTier) return
+      moveGame(listId, gameId, fromTier, toTier)
+      dragCurrentTier.current = toTier
+      return
     }
 
-    const { tierId: overTier, gameId: overGame } = parseId(overComposite);
-    if (activeTier === overTier) {
-      const tier = list.tiers.find((t) => t.id === activeTier);
-      if (!tier) return;
-      const oldIndex = tier.games.findIndex((g) => g.id === activeGame);
-      const newIndex = tier.games.findIndex((g) => g.id === overGame);
-      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        reorderGame(list.id, activeTier, oldIndex, newIndex);
-      }
+    // ── Dropped onto a game card ──
+    const over = parseDndId(overId)
+    if (!over || over.gameId === gameId) return
+
+    if (over.tierId !== fromTier) {
+      // Different tier — move there
+      moveGame(listId, gameId, fromTier, over.tierId)
+      dragCurrentTier.current = over.tierId
     } else {
-      const overTierObj = list.tiers.find((t) => t.id === overTier);
-      const toIndex = overTierObj
-        ? overTierObj.games.findIndex((g) => g.id === overGame)
-        : 0;
-      moveGame(list.id, activeTier, overTier, activeGame, Math.max(0, toIndex));
-    }
-  };
-
-  const activeGameData = activeId
-    ? (() => {
-        const { tierId, gameId } = parseId(activeId);
-        return list?.tiers
-          .find((t) => t.id === tierId)
-          ?.games.find((g) => g.id === gameId);
-      })()
-    : null;
-
-  const topFiveIds = new Set(list?.topFive.map((g) => g.id) ?? []);
-
-  const handleExportImage = async () => {
-    if (!exportRef.current) return;
-    setExporting(true);
-    setShowShare(false);
-    await new Promise((r) => setTimeout(r, 80));
-    try {
-      const filename = `${list?.name ?? "tier-list"}.png`;
-
-      // Show native save dialog
-      const savePath = await saveDialog({
-        title: "Save Tier List Image",
-        defaultPath: filename,
-        filters: [{ name: "PNG Image", extensions: ["png"] }],
-      });
-
-      if (!savePath) {
-        // User cancelled
-        setExporting(false);
-        return;
+      // Same tier — reorder
+      const freshList = getList(listId)
+      if (!freshList) return
+      const games = freshList.tiers[fromTier]
+      const fromIndex = games.findIndex(g => g.id === gameId)
+      const toIndex = games.findIndex(g => g.id === over.gameId)
+      if (fromIndex !== -1 && toIndex !== -1 && fromIndex !== toIndex) {
+        reorderGame(listId, fromTier, fromIndex, toIndex)
       }
-
-      // Render to PNG
-      const dataUrl = await toPng(exportRef.current, {
-        cacheBust: true,
-        backgroundColor: "#16161a",
-        pixelRatio: 2,
-      });
-
-      // Convert base64 dataUrl to bytes and write via Tauri fs
-      const base64 = dataUrl.split(",")[1];
-      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-      await writeFile(savePath, bytes);
-
-      showToast(`Saved to ${savePath}`);
-    } catch (e) {
-      console.error("Export failed", e);
-      showToast("Export failed — try again");
-    } finally {
-      setExporting(false);
     }
-  };
+  }
 
-  const handleCopyLink = () => {
-    const url = `tierup://list/${id}`;
-    navigator.clipboard
-      .writeText(url)
-      .then(() => showToast("Link copied!"))
-      .catch(() => {});
-    setShowShare(false);
-  };
+  const handleDragEnd = () => {
+    setActiveGame(null)
+    dragGameId.current = null
+    dragCurrentTier.current = null
+  }
+
+  const handleExport = useCallback(async () => {
+    if (!exportRef.current || !list) return
+    setExporting(true)
+    setExportMsg('')
+
+    // Snapshot the node so we can restore images after export
+    const node = exportRef.current
+    const images = Array.from(node.querySelectorAll('img'))
+    const originalSrcs = images.map(img => img.src)
+
+    try {
+      // Pre-convert all cover images to base64.
+      // html-to-image re-fetches images internally, but RAWG blocks
+      // cross-origin requests from localhost. Converting first avoids that.
+      // We also wait for each image to fully reload after setting the new src.
+      await Promise.all(images.map(async (img) => {
+        if (!img.src || img.src.startsWith('data:')) return
+        try {
+          const res = await fetch(img.src)
+          const blob = await res.blob()
+          await new Promise<void>((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              const dataUrl = reader.result as string
+              // Wait for the image to finish loading the new data URL
+              img.onload = () => resolve()
+              img.onerror = () => resolve()
+              img.src = dataUrl
+            }
+            reader.readAsDataURL(blob)
+          })
+        } catch {
+          img.src = ''
+        }
+      }))
+      
+      // Extra safety: give browser a frame to settle after all src changes
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const dataUrl = await toPng(node, {
+        pixelRatio: 2,
+        backgroundColor: '#0e0e1a',
+      })
+
+      // Restore original srcs
+      images.forEach((img, i) => { img.src = originalSrcs[i] })
+
+      const base64 = dataUrl.split(',')[1]
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      try {
+        const filePath = await save({
+          defaultPath: `${list.name.replace(/[^a-z0-9]/gi, '_')}_tierlist.png`,
+          filters: [{ name: 'PNG Image', extensions: ['png'] }],
+        })
+        if (filePath) {
+          await writeFile(filePath, bytes)
+          setExportMsg(`✅ Saved to ${filePath}`)
+        }
+      } catch {
+        const a = document.createElement('a')
+        a.href = dataUrl
+        a.download = `${list.name.replace(/[^a-z0-9]/gi, '_')}_tierlist.png`
+        a.click()
+        setExportMsg('✅ Image downloaded')
+      }
+    } catch (err) {
+      images.forEach((img, i) => { img.src = originalSrcs[i] })
+      setExportMsg('❌ Export failed')
+      console.error('Export error:', err)
+    } finally {
+      setExporting(false)
+      setTimeout(() => setExportMsg(''), 4000)
+    }
+  }, [list])
 
   if (!list) {
     return (
-      <div className="min-h-screen bg-brand-bg flex items-center justify-center">
+      <div className="min-h-screen bg-[#08080f] flex items-center justify-center text-slate-400">
         <div className="text-center">
-          <p className="text-brand-sub mb-4">List not found</p>
-          <Button onClick={() => navigate("/")}>← Go Home</Button>
+          <p className="font-mono mb-4">List not found</p>
+          <Button variant="ghost" onClick={() => navigate('/')}>← Back</Button>
         </div>
       </div>
-    );
+    )
   }
 
-  const totalGames = list.tiers.reduce((s, t) => s + t.games.length, 0);
-
   return (
-    <div className="min-h-screen bg-brand-bg text-brand-text flex flex-col">
-      {/* Header */}
-      <header className="border-b border-brand-border bg-brand-surface/90 backdrop-blur sticky top-0 z-20">
-        <div className="max-w-5xl mx-auto px-5 h-14 flex items-center gap-3">
-          <button
-            onClick={() => navigate("/")}
-            className="text-brand-sub hover:text-brand-text transition-colors p-1.5 rounded-lg hover:bg-brand-card"
-          >
-            <ArrowLeft size={18} />
-          </button>
+    <div className="min-h-screen bg-[#08080f] text-white flex flex-col">
+      <div className="fixed inset-0 pointer-events-none z-50"
+        style={{ background: 'repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.025) 2px,rgba(0,0,0,0.025) 4px)' }}
+      />
 
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-brand-accent flex items-center justify-center flex-shrink-0 shadow-glow">
-              <Trophy size={14} className="text-white" />
-            </div>
-            <h1 className="font-bold text-base truncate">{list.name}</h1>
-            <span className="text-brand-sub text-xs hidden sm:block flex-shrink-0">
-              {totalGames} game{totalGames !== 1 ? "s" : ""}
-            </span>
-          </div>
-
-          {/* Share dropdown */}
-          <div className="relative">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowShare((v) => !v)}
-            >
-              <Share2 size={13} /> Share
-            </Button>
-            {showShare && (
-              <>
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setShowShare(false)}
-                />
-                <div className="absolute right-0 top-10 w-52 bg-brand-surface border border-brand-border rounded-xl shadow-2xl z-20 py-1.5 overflow-hidden">
-                  <button
-                    onClick={handleExportImage}
-                    disabled={exporting}
-                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-brand-card text-brand-text transition-colors disabled:opacity-50"
-                  >
-                    <ImageDown size={14} className="text-brand-sub" />
-                    {exporting ? "Saving…" : "Save as Image"}
-                  </button>
-                  <button
-                    onClick={handleCopyLink}
-                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-sm hover:bg-brand-card text-brand-text transition-colors"
-                  >
-                    <Link2 size={14} className="text-brand-sub" /> Copy Link
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+      <nav className="sticky top-0 z-40 flex items-center justify-between px-4 h-[60px] bg-[#08080f]/90 border-b border-slate-800 backdrop-blur-xl gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Button variant="icon" size="sm" onClick={() => navigate('/')}>←</Button>
+          <span className="font-display text-lg font-bold tracking-wide truncate">{list.name}</span>
         </div>
-      </header>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <Button variant="ghost" size="sm" onClick={() => { setDefaultSearchTier('b'); setSearchOpen(true) }}>
+            + Add Game
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleExport} disabled={exporting}>
+            {exporting ? 'Exporting…' : '📤 Share'}
+          </Button>
+        </div>
+      </nav>
 
-      <div className="flex-1 max-w-5xl mx-auto w-full px-5 py-6 space-y-4">
-        {/* Top 5 panel */}
-        <div className="bg-brand-card border border-brand-border rounded-2xl overflow-hidden">
-          <button
-            onClick={() => setShowTopFive((v) => !v)}
-            className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-white/5 transition-colors"
-          >
-            <div className="flex items-center gap-2.5">
-              <Star size={15} className="text-yellow-400" fill="currentColor" />
-              <span className="font-bold text-sm">Top 5</span>
-              <span className="text-xs text-brand-sub bg-brand-muted/50 px-2 py-0.5 rounded-full">
-                {list.topFive.length} / 5
-              </span>
-            </div>
-            {showTopFive ? (
-              <ChevronUp size={15} className="text-brand-sub" />
-            ) : (
-              <ChevronDown size={15} className="text-brand-sub" />
-            )}
-          </button>
+      {exportMsg && (
+        <div className="bg-slate-900 border-b border-slate-700 px-4 py-2 text-sm text-center font-mono text-slate-300">
+          {exportMsg}
+        </div>
+      )}
 
-          {showTopFive && (
-            <div className="border-t border-brand-border px-5 pb-5 pt-4">
-              {list.topFive.length === 0 ? (
-                <div className="flex items-center gap-2 text-brand-sub text-sm italic">
-                  <Star size={13} className="text-brand-muted" />
-                  Hover any game tile and click ★ to pin it here
-                </div>
-              ) : (
-                <div className="flex gap-4 flex-wrap">
-                  {list.topFive.map((game, i) => (
-                    <div key={game.id} className="relative">
-                      <div className="absolute -top-2 -left-2 w-5 h-5 rounded-full bg-yellow-400 text-black text-xs font-black flex items-center justify-center z-10 shadow-md">
-                        {i + 1}
+      <main className="flex-1 max-w-3xl mx-auto w-full px-3 py-4 flex flex-col gap-3">
+
+        {/* Top 5 */}
+        <div className="bg-[#1a1a2e] border border-yellow-500/30 rounded-2xl p-4 shadow-[0_0_20px_rgba(255,215,0,0.06)]">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-yellow-400 font-display font-bold text-base tracking-widest uppercase">⭐ Top 5</span>
+          </div>
+          <div className="flex gap-2.5 flex-wrap">
+            {Array.from({ length: 5 }).map((_, i) => {
+              const gameId = list.top5[i]
+              const game = gameId
+                ? TIER_ORDER.flatMap(tid => list.tiers[tid]).find(g => g.id === gameId)
+                : null
+              return (
+                <div key={i}>
+                  {game ? (
+                    <div
+                      className="w-[62px] h-[82px] rounded-lg overflow-hidden border-2 border-yellow-500/50 relative cursor-pointer hover:border-yellow-400 transition-colors group"
+                      onClick={() => removeFromTop5(listId!, gameId!)}
+                      title={`${game.title} — click to remove`}
+                    >
+                      {game.cover ? (
+                        <img src={game.cover} alt={game.title} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-slate-800 flex items-center justify-center p-1">
+                          <span className="text-[8px] text-slate-400 text-center leading-tight font-mono">{game.title}</span>
+                        </div>
+                      )}
+                      <span className="absolute top-1 left-1.5 font-display text-yellow-400 font-bold text-xs drop-shadow z-10">#{i + 1}</span>
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="text-white text-lg">✕</span>
                       </div>
-                      <GameCard
-                        game={game}
-                        isTopFive
-                        onToggleTopFive={() => toggleTopFive(list.id, game)}
-                      />
-                      <p className="text-xs text-brand-sub mt-1 text-center max-w-[80px] truncate">
-                        {game.title}
-                      </p>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="w-[62px] h-[82px] rounded-lg border-2 border-dashed border-yellow-500/20 flex items-center justify-center">
+                      <span className="font-mono text-[10px] text-yellow-500/30">#{i + 1}</span>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          )}
+              )
+            })}
+          </div>
         </div>
 
-        {/* Tier list — captured for image export */}
-        <div
-          ref={exportRef}
-          className="space-y-2.5 p-4 rounded-2xl bg-brand-surface"
-          style={{ fontFamily: "Inter, system-ui, sans-serif" }}
-        >
-          {/* Export header — always visible in PNG */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-5 h-5 rounded bg-brand-accent flex items-center justify-center">
-                <Trophy size={10} className="text-white" />
-              </div>
-              <span className="font-black text-sm tracking-tight text-brand-text">
-                TierUp
-              </span>
-            </div>
-            <span className="text-brand-sub text-xs font-medium truncate max-w-xs">
-              {list.name}
-            </span>
-          </div>
-
+        {/* Tier rows */}
+        <div ref={exportRef} className="flex flex-col gap-1.5 bg-[#08080f] rounded-xl p-2">
           <DndContext
             sensors={sensors}
-            collisionDetection={closestCenter}
+            collisionDetection={collisionDetection}
             onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
           >
-            {list.tiers.map((tier) => (
+            {TIER_ORDER.map(tierId => (
               <TierRow
-                key={tier.id}
-                tier={tier}
+                key={tierId}
+                tierId={tierId}
+                games={list.tiers[tierId]}
                 listId={list.id}
-                topFiveIds={topFiveIds}
-                onAddGame={(tierId) => setAddingToTier(tierId)}
-                onRemoveGame={(tierId, gameId) =>
-                  removeGame(list.id, tierId, gameId)
-                }
-                onToggleTopFive={(game) => toggleTopFive(list.id, game)}
+                top5Ids={list.top5}
+                onRemoveGame={(tid, gid) => removeGame(list.id, tid, gid)}
+                onToggleTop5={(gid) => {
+                  if (list.top5.includes(gid)) removeFromTop5(list.id, gid)
+                  else addToTop5(list.id, gid)
+                }}
+                onAddGame={(tid) => {
+                  setDefaultSearchTier(tid)
+                  setSearchOpen(true)
+                }}
               />
             ))}
-
-            <DragOverlay dropAnimation={{ duration: 120, easing: "ease-out" }}>
-              {activeGameData && (
-                <div className="rotate-2 scale-110 shadow-2xl ring-2 ring-brand-accent rounded-md">
-                  <GameCard game={activeGameData} />
-                </div>
-              )}
+            <DragOverlay dropAnimation={null}>
+              {activeGame ? <GameCardOverlay game={activeGame} /> : null}
             </DragOverlay>
           </DndContext>
         </div>
 
-        <p className="text-center text-brand-muted text-xs pb-4">
-          Drag game covers between tiers · Hover a cover to remove or ★ Top 5 ·
-          Share → Save as Image to export
-        </p>
+        <div className="text-center">
+          <span className="font-display text-xs font-bold tracking-[4px] text-violet-500/40 uppercase">
+            Made with TIERUP
+          </span>
+        </div>
+
+      </main>
+
+      <div className="border-t border-slate-800 py-2.5 text-center text-xs text-slate-600 font-mono tracking-widest bg-[#08080f]">
+        📢 ADVERTISEMENT — Your ad here
       </div>
 
-      {/* Game search modal */}
-      {addingToTier && (
-        <GameSearchModal
-          tierLabel={list.tiers.find((t) => t.id === addingToTier)?.label}
-          onClose={() => setAddingToTier(null)}
-          onSelect={(game) => addGameToTier(list.id, addingToTier, game)}
-        />
-      )}
-
-      {/* Toast */}
-      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
+      <GameSearchModal
+        open={searchOpen}
+        defaultTier={defaultSearchTier}
+        onClose={() => setSearchOpen(false)}
+        onAddGame={(game, tierId) => addGame(list.id, tierId, game)}
+      />
     </div>
-  );
+  )
 }

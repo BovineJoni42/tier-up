@@ -1,89 +1,132 @@
-import { clsx } from 'clsx'
+import { useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Star, X } from 'lucide-react'
 import type { Game } from '../store/useTierStore'
 
 interface GameCardProps {
   game: Game
-  isTopFive?: boolean
-  onRemove?: () => void
-  onToggleTopFive?: () => void
-  isDragging?: boolean
-  size?: 'sm' | 'md'
+  listId: string
+  tierId: string
+  onRemove: () => void
+  onToggleTop5: () => void
+  isInTop5: boolean
+  top5Full: boolean
 }
 
-export function GameCard({ game, isTopFive, onRemove, onToggleTopFive, isDragging, size = 'md' }: GameCardProps) {
+export default function GameCard({
+  game,
+  listId,
+  tierId,
+  onRemove,
+  onToggleTop5,
+  isInTop5,
+  top5Full,
+}: GameCardProps) {
+  const [imgError, setImgError] = useState(false)
+  const [hovered, setHovered] = useState(false)
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `${tierId}::${game.id}`,
+    data: { game, tierId, listId },
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.35 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  }
+
   return (
     <div
-      className={clsx(
-        'relative group rounded-md overflow-hidden border border-brand-border bg-brand-card cursor-grab active:cursor-grabbing select-none flex-shrink-0',
-        isDragging && 'opacity-40 ring-2 ring-brand-accent',
-        size === 'md' ? 'w-20 h-28' : 'w-14 h-20'
-      )}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="relative w-[62px] h-[82px] rounded-lg overflow-hidden border border-white/[0.07] cursor-grab active:cursor-grabbing flex-shrink-0 group"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       title={game.title}
     >
-      {game.coverUrl ? (
+      {/* Cover image */}
+      {game.cover && !imgError ? (
         <img
-          src={game.coverUrl}
+          src={game.cover}
           alt={game.title}
           className="w-full h-full object-cover"
+          onError={() => setImgError(true)}
           draggable={false}
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center bg-brand-muted text-brand-sub text-xs text-center p-1 leading-tight">
-          {game.title}
+        <div className="w-full h-full bg-slate-800 flex items-center justify-center p-1">
+          <span className="text-[8px] text-slate-400 text-center leading-tight font-mono">
+            {game.title}
+          </span>
         </div>
       )}
 
       {/* Hover overlay */}
-      <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
-        {onToggleTopFive && (
+      {hovered && (
+        <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-1">
+          {/* Top 5 button */}
           <button
-            onPointerDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); onToggleTopFive() }}
-            className={clsx(
-              'p-1 rounded-full transition-colors',
-              isTopFive ? 'text-yellow-400 hover:text-yellow-300' : 'text-brand-sub hover:text-yellow-400'
-            )}
-            title={isTopFive ? 'Remove from Top 5' : 'Add to Top 5'}
+            className={`w-6 h-6 rounded-full flex items-center justify-center text-xs transition-colors
+              ${isInTop5
+                ? 'bg-yellow-400 text-black hover:bg-yellow-300'
+                : top5Full
+                  ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  : 'bg-slate-700 text-yellow-400 hover:bg-yellow-400 hover:text-black'
+              }`}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!top5Full || isInTop5) onToggleTop5()
+            }}
+            title={isInTop5 ? 'Remove from Top 5' : top5Full ? 'Top 5 is full' : 'Add to Top 5'}
           >
-            <Star size={14} fill={isTopFive ? 'currentColor' : 'none'} />
+            ★
           </button>
-        )}
-        {onRemove && (
+          {/* Remove button */}
           <button
-            onPointerDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); onRemove() }}
-            className="p-1 rounded-full text-brand-sub hover:text-red-400 transition-colors"
+            className="w-6 h-6 rounded-full bg-slate-700 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center text-xs transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove()
+            }}
             title="Remove"
           >
-            <X size={14} />
+            ✕
           </button>
-        )}
-      </div>
-
-      {/* Top 5 star badge */}
-      {isTopFive && (
-        <div className="absolute top-1 right-1 bg-yellow-400 rounded-full p-0.5 shadow-md">
-          <Star size={8} fill="black" color="black" />
         </div>
       )}
     </div>
   )
 }
 
-// Sortable wrapper using @dnd-kit
-export function SortableGameCard(props: GameCardProps & { id: string }) {
-  const { id, ...rest } = props
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  }
+// ── Overlay card shown while dragging ──────────────────────────────────────
+export function GameCardOverlay({ game }: { game: Game }) {
+  const [imgError, setImgError] = useState(false)
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <GameCard {...rest} isDragging={isDragging} />
+    <div className="w-[62px] h-[82px] rounded-lg overflow-hidden border border-violet-400/50 shadow-[0_8px_30px_rgba(124,58,237,0.5)] cursor-grabbing rotate-3 flex-shrink-0">
+      {game.cover && !imgError ? (
+        <img
+          src={game.cover}
+          alt={game.title}
+          className="w-full h-full object-cover"
+          onError={() => setImgError(true)}
+          draggable={false}
+        />
+      ) : (
+        <div className="w-full h-full bg-slate-700 flex items-center justify-center p-1">
+          <span className="text-[8px] text-slate-300 text-center leading-tight font-mono">{game.title}</span>
+        </div>
+      )}
     </div>
   )
 }
