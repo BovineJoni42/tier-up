@@ -54,13 +54,15 @@ export async function searchGames(
   genre?: string,
   page = 1
 ): Promise<SearchResult[]> {
-  if (!query.trim()) return []
+  // Allow genre-only browsing with no search query
+  if (!query.trim() && (!genre || genre === 'All')) return []
 
   const params: Record<string, string> = {
-    search: query,
     page_size: '20',
     page: String(page),
+    ordering: '-rating',
   }
+  if (query.trim()) params.search = query.trim()
   if (genre && genre !== 'All') params.genres = genre.toLowerCase()
 
   try {

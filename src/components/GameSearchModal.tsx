@@ -49,7 +49,8 @@ export default function GameSearchModal({
   }, [open, defaultTier])
 
   const doSearch = useCallback(async (q: string, g: string) => {
-    if (!q.trim()) { setResults([]); return }
+    // Allow genre-only search (no query), but require at least one of query or genre
+    if (!q.trim() && (!g || g === 'All')) { setResults([]); return }
     setLoading(true)
     const r = await searchGames(q, g === 'All' ? undefined : g)
     setResults(r)
@@ -64,7 +65,8 @@ export default function GameSearchModal({
 
   const handleGenreChange = (g: string) => {
     setGenre(g)
-    doSearch(query, g)
+    // Always search when genre changes, even with no query
+    doSearch(query, g === 'All' ? '' : g)
   }
 
   const handleAdd = () => {
@@ -176,7 +178,7 @@ export default function GameSearchModal({
               )}
 
               {!loading && results.length === 0 && !query && (
-                <div className="text-center text-slate-600 text-sm py-8 font-mono">Type to search games</div>
+                <div className="text-center text-slate-600 text-sm py-8 font-mono">Type to search, or pick a genre above</div>
               )}
 
               {!loading && results.length > 0 && (

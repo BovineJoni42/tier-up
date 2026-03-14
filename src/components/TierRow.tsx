@@ -66,15 +66,15 @@ export default function TierRow({
                 tierId={tierId}
                 isInTop5={top5Ids.includes(game.id)}
                 top5Full={top5Ids.length >= 5}
-                onRemove={() => onRemoveGame(tierId, game.id)}
+                        onRemove={() => onRemoveGame(tierId, game.id)}
                 onToggleTop5={() => onToggleTop5(game.id)}
               />
             ))
           )}
 
-          {/* Add game button */}
+          {/* Add game button — hidden during PNG export */}
           <button
-            className="w-[62px] h-[82px] rounded-lg border-2 border-dashed border-slate-700
+            className="tierup-add-btn w-[62px] h-[82px] rounded-lg border-2 border-dashed border-slate-700
               flex items-center justify-center text-slate-600 text-xl flex-shrink-0
               hover:border-violet-600 hover:text-violet-400 transition-colors"
             onClick={() => onAddGame(tierId)}

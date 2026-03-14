@@ -12,14 +12,18 @@ import {
   type DragOverEvent,
   type CollisionDetection,
 } from '@dnd-kit/core'
-import { toPng } from 'html-to-image'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile } from '@tauri-apps/plugin-fs'
-import { useTierStore, TIER_ORDER, type TierId, type Game } from '../store/useTierStore'
+import { useTierStore, TIER_ORDER, TIER_META, type TierId, type Game } from '../store/useTierStore'
 import TierRow from '../components/TierRow'
 import GameSearchModal from '../components/GameSearchModal'
 import { GameCardOverlay } from '../components/GameCard'
 import Button from '../components/Button'
+
+// Tauri global API
+declare const window: Window & {
+  __TAURI__: { core: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> } }
+}
 
 function parseDndId(id: string): { tierId: TierId; gameId: string } | null {
   const parts = id.split('::')
@@ -27,27 +31,17 @@ function parseDndId(id: string): { tierId: TierId; gameId: string } | null {
   return { tierId: parts[0] as TierId, gameId: parts[1] }
 }
 
-// Build a collision detector that knows the current tier of the dragged item.
-// - If hovering over a DIFFERENT tier's droppable → return that tier
-// - If hovering over a game card in the SAME tier → return that card (for reorder)
-// - If hovering over a game card in a DIFFERENT tier → return that tier droppable
 function makeCollision(currentTierRef: React.MutableRefObject<TierId | null>): CollisionDetection {
   return (args) => {
     const currentTier = currentTierRef.current
-
-    // Check tier droppables first
     const tierHits = rectIntersection({
       ...args,
       droppableContainers: args.droppableContainers.filter(c =>
         String(c.id).startsWith('tier::')
       ),
     })
-
     if (tierHits.length > 0) {
       const hitTierId = String(tierHits[0].id).replace('tier::', '')
-
-      // If we hit our OWN tier droppable, ignore it and check game cards instead
-      // so we can detect which card we're hovering for reordering
       if (hitTierId === currentTier) {
         const cardHits = rectIntersection({
           ...args,
@@ -57,17 +51,245 @@ function makeCollision(currentTierRef: React.MutableRefObject<TierId | null>): C
           }),
         })
         if (cardHits.length > 0) return cardHits
-        return [] // hovering empty space in own tier — do nothing
+        return []
       }
-
-      // Hit a different tier — return it
       return tierHits
     }
-
-    // No tier hit — fall back to any card
     return rectIntersection(args)
   }
 }
+
+// ── Canvas export ─────────────────────────────────────────────────────────────
+// Draws the tier list directly onto a canvas, loading images via Rust.
+// This completely bypasses html-to-image and CORS.
+
+async function loadImageFromBase64(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = dataUrl
+  })
+}
+
+async function fetchImageViaRust(url: string): Promise<HTMLImageElement | null> {
+  try {
+    const dataUrl = await window.__TAURI__.core.invoke<string>('fetch_image_as_base64', { url })
+    return await loadImageFromBase64(dataUrl)
+  } catch {
+    return null
+  }
+}
+
+async function exportToCanvas(list: { name: string; tiers: Record<TierId, Game[]>; top5: string[] }): Promise<string> {
+  const SCALE = 2
+  const W = 900
+  const PADDING = 20
+  const TIER_H = 100
+  const GAME_W = 66
+  const GAME_H = 88
+  const LABEL_W = 64
+  const GAP = 8
+  const CORNER = 12
+  const TOP5_H = 160
+
+  // Pre-fetch all unique cover images
+  const allGames = TIER_ORDER.flatMap(tid => list.tiers[tid])
+  const top5Games = list.top5
+    .map(id => allGames.find(g => g.id === id))
+    .filter(Boolean) as Game[]
+  const uniqueUrls = Array.from(new Set(allGames.map(g => g.cover).filter(Boolean)))
+  const imageCache: Record<string, HTMLImageElement | null> = {}
+  await Promise.all(uniqueUrls.map(async (url) => {
+    imageCache[url] = await fetchImageViaRust(url)
+  }))
+
+  // Calculate canvas height
+  const tiersWithGames = TIER_ORDER.length
+  const TOP5_SECTION_H = TOP5_H + PADDING
+  const TOTAL_H = PADDING + TOP5_SECTION_H + tiersWithGames * (TIER_H + GAP) + PADDING + 40
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W * SCALE
+  canvas.height = TOTAL_H * SCALE
+  const ctx = canvas.getContext('2d')!
+  ctx.scale(SCALE, SCALE)
+
+  // Background
+  ctx.fillStyle = '#08080f'
+  ctx.fillRect(0, 0, W, TOTAL_H)
+
+  // Helper: rounded rect
+  function roundRect(x: number, y: number, w: number, h: number, r: number) {
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.lineTo(x + w - r, y)
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+    ctx.lineTo(x + w, y + h - r)
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+    ctx.lineTo(x + r, y + h)
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+    ctx.lineTo(x, y + r)
+    ctx.quadraticCurveTo(x, y, x + r, y)
+    ctx.closePath()
+  }
+
+  // Helper: draw game cover with title overlay at the bottom
+  function drawGame(game: Game, x: number, y: number, w: number, h: number) {
+    const img = imageCache[game.cover]
+    roundRect(x, y, w, h, 6)
+    ctx.save()
+    ctx.clip()
+
+    if (img) {
+      ctx.drawImage(img, x, y, w, h)
+    } else {
+      ctx.fillStyle = '#1a1a2e'
+      ctx.fill()
+    }
+
+    // Dark gradient overlay at bottom for title readability
+    const grad = ctx.createLinearGradient(x, y + h * 0.55, x, y + h)
+    grad.addColorStop(0, 'rgba(0,0,0,0)')
+    grad.addColorStop(1, 'rgba(0,0,0,0.85)')
+    ctx.fillStyle = grad
+    ctx.fillRect(x, y + h * 0.55, w, h * 0.45)
+
+    // Title text — word wrap to fit tile width
+    ctx.fillStyle = '#ffffff'
+    ctx.font = `bold ${Math.floor(w * 0.135)}px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'bottom'
+    const fontSize = Math.floor(w * 0.135)
+    const lineH = fontSize + 1
+    const maxW = w - 6
+    const words = game.title.split(' ')
+    const lines: string[] = []
+    let line = ''
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word
+      if (ctx.measureText(test).width > maxW) { if (line) lines.push(line); line = word }
+      else line = test
+    }
+    if (line) lines.push(line)
+    // Draw up to 2 lines from bottom
+    const maxLines = 2
+    const drawLines = lines.slice(-maxLines)
+    drawLines.forEach((l, i) => {
+      const lineY = y + h - 4 - (drawLines.length - 1 - i) * lineH
+      ctx.fillText(l, x + w / 2, lineY, maxW)
+    })
+
+    ctx.restore()
+  }
+
+  let y = PADDING
+
+  // ── Top 5 Section ──
+  roundRect(PADDING, y, W - PADDING * 2, TOP5_H, CORNER)
+  ctx.fillStyle = '#1a1a2e'
+  ctx.fill()
+  ctx.strokeStyle = '#ffd700'
+  ctx.lineWidth = 1
+  ctx.stroke()
+
+  ctx.fillStyle = '#ffd700'
+  ctx.font = 'bold 16px sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('⭐  TOP 5', PADDING + 16, y + 28)
+
+  const slotW = GAME_W
+  const slotH = GAME_H
+  const slotY = y + 48
+  for (let i = 0; i < 5; i++) {
+    const slotX = PADDING + 16 + i * (slotW + 12)
+    const game = top5Games[i]
+    if (game) {
+      drawGame(game, slotX, slotY, slotW, slotH)
+      // Rank badge
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      ctx.fillRect(slotX, slotY, 22, 18)
+      ctx.fillStyle = '#ffd700'
+      ctx.font = 'bold 11px sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillText(`#${i + 1}`, slotX + 3, slotY + 12)
+    } else {
+      roundRect(slotX, slotY, slotW, slotH, 6)
+      ctx.strokeStyle = 'rgba(255,215,0,0.2)'
+      ctx.lineWidth = 2
+      ctx.setLineDash([4, 4])
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = 'rgba(255,215,0,0.2)'
+      ctx.font = '11px monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(`#${i + 1}`, slotX + slotW / 2, slotY + slotH / 2)
+    }
+  }
+
+  y += TOP5_H + GAP + PADDING / 2
+
+  // ── Tier Rows ──
+  for (const tierId of TIER_ORDER) {
+    const meta = TIER_META[tierId]
+    const games = list.tiers[tierId]
+    const rowH = Math.max(TIER_H, games.length > 0 ? GAME_H + 16 : TIER_H)
+
+    // Row background
+    roundRect(PADDING, y, W - PADDING * 2, rowH, CORNER)
+    ctx.strokeStyle = '#2a2a4a'
+    ctx.lineWidth = 1
+    ctx.stroke()
+
+    // Tier label bg
+    roundRect(PADDING, y, LABEL_W, rowH, CORNER)
+    ctx.fillStyle = meta.bg
+    ctx.fill()
+
+    // Tier label text
+    ctx.fillStyle = meta.color
+    ctx.font = `bold 28px sans-serif`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(meta.label, PADDING + LABEL_W / 2, y + rowH / 2)
+
+    // Games area bg
+    roundRect(PADDING + LABEL_W, y, W - PADDING * 2 - LABEL_W, rowH, CORNER)
+    ctx.fillStyle = '#0e0e1a'
+    ctx.fill()
+
+    // Draw games
+    const gamesX = PADDING + LABEL_W + 10
+    const gamesY = y + (rowH - GAME_H) / 2
+    games.forEach((game, i) => {
+      drawGame(game, gamesX + i * (GAME_W + GAP), gamesY, GAME_W, GAME_H)
+    })
+
+    if (games.length === 0) {
+      ctx.fillStyle = '#3a3a5a'
+      ctx.font = '12px monospace'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText('empty', gamesX, y + rowH / 2)
+    }
+
+    y += rowH + GAP
+  }
+
+  // ── Watermark ──
+  ctx.fillStyle = 'rgba(124,58,237,0.35)'
+  ctx.font = 'bold 12px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.letterSpacing = '4px'
+  ctx.fillText('MADE WITH TIERUP', W / 2, y + 16)
+
+  return canvas.toDataURL('image/png')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function TierListBuilder() {
   const { id: listId } = useParams<{ id: string }>()
@@ -84,11 +306,7 @@ export default function TierListBuilder() {
 
   const dragGameId = useRef<string | null>(null)
   const dragCurrentTier = useRef<TierId | null>(null)
-
-  // Collision detector reads from the ref so it always knows current tier
   const collisionDetection = useRef(makeCollision(dragCurrentTier)).current
-
-  const exportRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -106,12 +324,10 @@ export default function TierListBuilder() {
 
   const handleDragOver = (e: DragOverEvent) => {
     if (!e.over || !listId || !dragGameId.current || !dragCurrentTier.current) return
-
     const overId = String(e.over.id)
     const gameId = dragGameId.current
     const fromTier = dragCurrentTier.current
 
-    // ── Dropped onto a different tier droppable ──
     if (overId.startsWith('tier::')) {
       const toTier = overId.replace('tier::', '') as TierId
       if (toTier === fromTier) return
@@ -120,16 +336,13 @@ export default function TierListBuilder() {
       return
     }
 
-    // ── Dropped onto a game card ──
     const over = parseDndId(overId)
     if (!over || over.gameId === gameId) return
 
     if (over.tierId !== fromTier) {
-      // Different tier — move there
       moveGame(listId, gameId, fromTier, over.tierId)
       dragCurrentTier.current = over.tierId
     } else {
-      // Same tier — reorder
       const freshList = getList(listId)
       if (!freshList) return
       const games = freshList.tiers[fromTier]
@@ -148,56 +361,16 @@ export default function TierListBuilder() {
   }
 
   const handleExport = useCallback(async () => {
-    if (!exportRef.current || !list) return
+    if (!list) return
     setExporting(true)
     setExportMsg('')
-
-    // Snapshot the node so we can restore images after export
-    const node = exportRef.current
-    const images = Array.from(node.querySelectorAll('img'))
-    const originalSrcs = images.map(img => img.src)
-
     try {
-      // Pre-convert all cover images to base64.
-      // html-to-image re-fetches images internally, but RAWG blocks
-      // cross-origin requests from localhost. Converting first avoids that.
-      // We also wait for each image to fully reload after setting the new src.
-      await Promise.all(images.map(async (img) => {
-        if (!img.src || img.src.startsWith('data:')) return
-        try {
-          const res = await fetch(img.src)
-          const blob = await res.blob()
-          await new Promise<void>((resolve) => {
-            const reader = new FileReader()
-            reader.onload = () => {
-              const dataUrl = reader.result as string
-              // Wait for the image to finish loading the new data URL
-              img.onload = () => resolve()
-              img.onerror = () => resolve()
-              img.src = dataUrl
-            }
-            reader.readAsDataURL(blob)
-          })
-        } catch {
-          img.src = ''
-        }
-      }))
-      
-      // Extra safety: give browser a frame to settle after all src changes
-      await new Promise(resolve => setTimeout(resolve, 100))
-
-      const dataUrl = await toPng(node, {
-        pixelRatio: 2,
-        backgroundColor: '#0e0e1a',
-      })
-
-      // Restore original srcs
-      images.forEach((img, i) => { img.src = originalSrcs[i] })
-
+      const dataUrl = await exportToCanvas(list)
       const base64 = dataUrl.split(',')[1]
       const binary = atob(base64)
       const bytes = new Uint8Array(binary.length)
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
       try {
         const filePath = await save({
           defaultPath: `${list.name.replace(/[^a-z0-9]/gi, '_')}_tierlist.png`,
@@ -215,7 +388,6 @@ export default function TierListBuilder() {
         setExportMsg('✅ Image downloaded')
       }
     } catch (err) {
-      images.forEach((img, i) => { img.src = originalSrcs[i] })
       setExportMsg('❌ Export failed')
       console.error('Export error:', err)
     } finally {
@@ -307,7 +479,7 @@ export default function TierListBuilder() {
         </div>
 
         {/* Tier rows */}
-        <div ref={exportRef} className="flex flex-col gap-1.5 bg-[#08080f] rounded-xl p-2">
+        <div className="flex flex-col gap-1.5 bg-[#08080f] rounded-xl p-2">
           <DndContext
             sensors={sensors}
             collisionDetection={collisionDetection}
