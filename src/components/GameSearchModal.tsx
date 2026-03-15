@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchGames, RAWG_GENRES, GENRE_LABELS } from '../lib/rawg'
+
+// Tauri global API
+declare const window: Window & {
+  __TAURI__: { core: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> } }
+}
 import type { SearchResult } from '../lib/rawg'
 import { searchMovies, searchTV, MOVIE_GENRES, TV_GENRES } from '../lib/tmdb'
 import type { TierId, Game, ListType } from '../store/useTierStore'
@@ -38,6 +43,22 @@ export default function GameSearchModal({
   const [manualYear, setManualYear] = useState(new Date().getFullYear().toString())
 
   const inputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState(false)
+
+  const pickImageFromDevice = async () => {
+    setUploading(true)
+    try {
+      const dataUrl = await window.__TAURI__.core.invoke<string>('pick_image_file')
+      setManualCover(dataUrl)
+    } catch (e: any) {
+      // User cancelled — no error needed
+      if (!String(e).includes('No file selected')) {
+        console.error('Image pick failed:', e)
+      }
+    } finally {
+      setUploading(false)
+    }
+  }
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -232,12 +253,31 @@ export default function GameSearchModal({
                 placeholder={listType === 'movies' ? 'Movie title *' : listType === 'tv' ? 'Show title *' : 'Game title *'}
                 className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
               />
-              <input
-                value={manualCover}
-                onChange={e => setManualCover(e.target.value)}
-                placeholder="Cover image URL (optional)"
-                className="w-full bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
-              />
+              <div className="flex gap-2">
+                <input
+                  value={manualCover.startsWith('data:') ? '📸 Custom image uploaded' : manualCover}
+                  onChange={e => setManualCover(e.target.value)}
+                  placeholder="Cover image URL (optional)"
+                  readOnly={manualCover.startsWith('data:')}
+                  className="flex-1 bg-[#0e0e1a] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-violet-500"
+                />
+                <button
+                  onClick={pickImageFromDevice}
+                  disabled={uploading}
+                  className="flex-shrink-0 px-4 py-3 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors whitespace-nowrap"
+                  title="Upload image from device"
+                >
+                  {uploading ? '...' : '📁 Browse'}
+                </button>
+              </div>
+              {manualCover.startsWith('data:') && (
+                <button
+                  onClick={() => setManualCover('')}
+                  className="text-xs text-red-400 hover:text-red-300 text-left font-mono transition-colors"
+                >
+                  ✕ Remove uploaded image
+                </button>
+              )}
               <div className="flex gap-3">
                 <input
                   value={manualPlatform}

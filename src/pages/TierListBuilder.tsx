@@ -286,7 +286,7 @@ async function exportToCanvas(list: { name: string; tiers: Record<TierId, Game[]
   ctx.textBaseline = 'middle'
   ctx.letterSpacing = '4px'
   const typeEmoji = list.type === 'movies' ? '🎬' : list.type === 'tv' ? '📺' : '🎮'
-  ctx.fillText(`${typeEmoji}  MADE WITH TIERUP  ${typeEmoji}`, W / 2, y + 16)
+  ctx.fillText(`${typeEmoji}  MADE WITH TIERCRAFT  ${typeEmoji}`, W / 2, y + 16)
 
   return canvas.toDataURL('image/png')
 }
@@ -518,7 +518,7 @@ export default function TierListBuilder() {
 
         <div className="text-center">
           <span className="font-display text-xs font-bold tracking-[4px] text-violet-500/40 uppercase">
-            Made with TIERUP
+            Made with TIERCRAFT
           </span>
         </div>
 
@@ -565,7 +565,7 @@ export default function TierListBuilder() {
               {/* Twitter/X */}
               <button
                 onClick={() => {
-                  const text = encodeURIComponent(`Check out my ${list.name} tier list! 🎮 Made with TierUp #TierUp #Gaming`)
+                  const text = encodeURIComponent(`Check out my ${list.name} tier list! 🎮 Made with TierCraft #TierCraft #Gaming`)
                   openUrl(`https://twitter.com/intent/tweet?text=${text}`)
                 }}
                 className="flex items-center gap-4 p-4 bg-[#0e0e1a] border border-slate-800 rounded-xl hover:border-[#1d9bf0] hover:bg-[#0e0e1a]/80 transition-all group"
@@ -604,7 +604,7 @@ export default function TierListBuilder() {
                       return `${TIER_META[tid].label}: ${games}`
                     })
                     .join('\n')
-                  const text = list.name + '\n' + '\u2500'.repeat(30) + '\n' + tiers + '\n\nMade with TierUp 🎮'
+                  const text = list.name + '\n' + '\u2500'.repeat(30) + '\n' + tiers + '\n\nMade with TierCraft 🎮'
                   navigator.clipboard.writeText(text)
                   setExportMsg('📋 Tier list copied to clipboard!')
                   setShareOpen(false)

@@ -234,7 +234,7 @@ export const useTierStore = create<TierStore>()(
       },
     }),
     {
-      name: 'tierup-storage',
+      name: 'tiercraft-storage',
       version: 1,
     }
   )

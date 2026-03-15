@@ -1,5 +1,5 @@
 {
-  "name": "tier-up",
+  "name": "tier-craft",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -36,5 +36,6 @@
     "tailwindcss": "^3.4.19",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
-  }
+  },
+  "description": "TierCraft - Rank Your Games, Movies & TV Shows"
 }

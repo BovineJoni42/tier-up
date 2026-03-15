@@ -46,7 +46,7 @@ export default function Dashboard() {
       {/* Navbar */}
       <nav className="sticky top-0 z-40 flex items-center justify-between px-5 h-[60px] bg-[#08080f]/90 border-b border-slate-800 backdrop-blur-xl">
         <span className="font-display text-3xl font-bold tracking-[3px] bg-gradient-to-br from-violet-400 to-purple-500 bg-clip-text text-transparent">
-          TIERUP
+          TIERCRAFT
         </span>
         <Button variant="primary" onClick={() => setShowNewModal(true)}>
           + New List
